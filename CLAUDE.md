@@ -60,17 +60,37 @@ Tu rol no es el de un asistente que ejecuta tareas: es el de un **compañero int
 
 | Pieza | Elección | Por qué |
 |---|---|---|
-| Lenguaje | **Java 21 (LTS)** | Mínimo de Spring Boot 3.x/4.x es 17; 21 habilita virtual threads y es el estándar práctico hoy |
-| Framework | **Spring Boot** | Objetivo del proyecto |
+| Lenguaje | **Java 25 (LTS)** | LTS vigente desde septiembre 2025, sucesora de la 21. No es "la más nueva por moda": es el estándar actual recomendado por Oracle para nuevos proyectos. |
+| Framework | **Spring Boot 4.1.0** | Objetivo del proyecto. Ver nota de modularización abajo — es relevante para todo lo que sigue. |
 | Build | **Maven** | Ya está en el CV de Esteban; estándar en entornos empresariales tipo BairesDev |
 | Base de datos | **PostgreSQL** | Estándar de facto para proyectos nuevos; mejor en joins complejos; default *Read Committed* (vs *Repeatable Read* de MySQL) más adecuado para el escenario de concurrencia |
 | ORM | **Spring Data JPA + Hibernate** | — |
 | Boilerplate | **Lombok** | Estándar del ecosistema Spring |
-| Tests | **JUnit 5 + Mockito** (+ Testcontainers para la parte de concurrencia) | — |
+| Tests | **JUnit 5 + Mockito** (vía starters modulares de Boot 4, ver abajo) + **Testcontainers** para la parte de concurrencia | — |
 | Contenedores | **Docker + docker-compose** | App + Postgres levantan con un comando |
 | CI | **GitHub Actions** | Corre los tests en cada push |
 | Docs API | **springdoc-openapi** | Estándar actual para Swagger UI en Spring Boot |
 | Seguridad | **Spring Security + JWT + BCrypt** | — |
+
+**⚠️ Nota de versión — Spring Boot 4 modularizó los starters (oct/nov 2025):** este proyecto usa el naming **nuevo**, no el clásico. `spring-boot-starter-web` (nombre de Boot 3.x y anteriores) pasó a llamarse **`spring-boot-starter-webmvc`** en Boot 4. Además, cada starter ahora tiene su propio starter de test compañero (`spring-boot-starter-webmvc-test`, `spring-boot-starter-data-jpa-test`, etc.) en vez de un único `spring-boot-starter-test` genérico. Si alguna vez un ejemplo, tutorial o la propia documentación de Spring muestra `spring-boot-starter-web` a secas, es material viejo (Boot 3.x o anterior) — no lo copies literal, traducilo al naming modular.
+
+**Dependencias reales del proyecto** (ya generadas con Spring Initializr):
+- `spring-boot-starter-webmvc`
+- `spring-boot-starter-data-jpa`
+- `spring-boot-starter-validation`
+- `spring-boot-devtools` (runtime, optional)
+- `postgresql` (driver, runtime)
+- `lombok` (optional)
+- `spring-boot-starter-webmvc-test`, `spring-boot-starter-data-jpa-test`, `spring-boot-starter-validation-test` (test)
+- `spring-boot-testcontainers`, `testcontainers-junit-jupiter`, `testcontainers-postgresql` (test)
+- Pendientes de agregar en su etapa correspondiente: `springdoc-openapi` (Etapa 1), `spring-boot-starter-security` + librería JWT (Etapa 6)
+
+**Coordenadas del proyecto:**
+- groupId: `com.estebancardozo`
+- artifactId: `tienda-discos`
+- Paquete base: `com.estebancardozo.tiendadiscos`
+
+*(Nota: el paquete base no lleva guion aunque el artifactId sí lo tenga — los paquetes Java no admiten guiones por regla del lenguaje, no por convención. Y va todo en minúsculas, sin excepción, según la guía oficial de convenciones de Oracle.)*
 
 **Decisiones tomadas explícitamente EN CONTRA:**
 - **Sin Flyway** — descartado para no inflar el alcance del primer proyecto.
@@ -197,6 +217,21 @@ Se deja para el final para que la seguridad no tape errores del núcleo durante 
 ---
 
 ## 6. CONVENCIONES
+
+**Estructura de paquetes: por capa** (decisión explícita de Esteban, ver razonamiento si hace falta recordarlo: agrupar por rol técnico, no por dominio de negocio, para reducir una variable mientras se aprenden el resto de las herramientas nuevas).
+
+```
+com.estebancardozo.tiendadiscos
+├── controller/   → ArtistaController, AlbumController, EdicionController,
+│                    ClienteController, CompraController, AdminController...
+├── service/      → un Service por entidad, con la lógica de negocio
+├── repository/   → interfaces JpaRepository, una por entidad
+├── entity/       → Artista, Album, Edicion, Cliente, Compra, Item, Admin
+├── dto/          → objetos de entrada/salida de los controllers (nunca exponer entities)
+├── security/     → configuración de Spring Security, JWT (Etapa 6)
+├── exception/    → excepciones custom + manejador global (@ControllerAdvice)
+└── config/       → configuración general (OpenAPI, etc.)
+```
 
 - Nombres de tablas y columnas en **snake_case** (Postgres es case-sensitive con identificadores entre comillas; mixedCase se vuelve un problema).
 - Clases y variables Java en inglés o español, pero **consistente en todo el proyecto** (definir en la etapa 1 y no mezclar).

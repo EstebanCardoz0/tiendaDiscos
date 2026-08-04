@@ -1,4 +1,4 @@
-package com.example.tiendaDiscos;
+package com.estebancardozo.tiendadiscos;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
