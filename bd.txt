@@ -1,0 +1,54 @@
+erDiagram
+    ARTISTA ||--o{ ALBUM : compone
+    ALBUM ||--o{ EDICION : tiene
+    EDICION ||--o{ ITEM : "vendida en"
+    COMPRA ||--o{ ITEM : contiene
+    CLIENTE ||--o{ COMPRA : realiza
+
+    ARTISTA {
+        bigint id PK
+        varchar nombre
+        varchar pais
+    }
+    ALBUM {
+        bigint id PK
+        varchar titulo
+        int anio
+        varchar discografica
+        varchar genero
+        bigint artista_id FK
+    }
+    EDICION {
+        bigint id PK
+        varchar nombre
+        int stock
+        numeric precio
+        bigint album_id FK
+    }
+    CLIENTE {
+        bigint id PK
+        varchar nombre
+        varchar apellido
+        varchar dni
+        varchar mail
+        varchar user
+        varchar pass
+    }
+    COMPRA {
+        bigint id PK
+        date fecha
+        numeric monto
+        bigint cliente_id FK
+    }
+    ITEM {
+        bigint id PK
+        int cantidad
+        numeric precio_unitario
+        bigint compra_id FK
+        bigint edicion_id FK
+    }
+    ADMIN {
+        bigint id PK
+        varchar user
+        varchar pass
+    }

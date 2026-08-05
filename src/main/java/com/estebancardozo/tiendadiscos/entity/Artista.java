@@ -21,10 +21,10 @@ public class Artista {
 
     @Override
     public boolean equals(Object o) {
-        if (this == 0) return true;
+        if (this == o) return true;
         if (!(o instanceof Artista)) return false;
         Artista artista = (Artista) o;
-        return id != null && id.equals(artista.id)
+        return id != null && id.equals(artista.id);
     }
 
     @Override
