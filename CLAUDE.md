@@ -238,3 +238,95 @@ com.estebancardozo.tiendadiscos
 - Nunca exponer entidades JPA directamente en los controllers: usar DTOs.
 - Contraseñas siempre hasheadas, nunca en texto plano, ni siquiera en datos de prueba.
 - Commits en Git con mensajes descriptivos (Esteban tiene experiencia gestionando repos y PRs — aprovecharla).
+
+---
+
+## 7. ENTORNO LOCAL — BASE DE DATOS
+
+**El proyecto se desarrolla en dos PCs distintas.** Esta sección existe para que cualquiera de las dos pueda levantar el entorno desde cero. Si estás en una máquina donde nunca se corrió el proyecto, empezá por acá.
+
+### Decisión: Postgres corre en un contenedor, desde la Etapa 1
+
+Se adelantó el uso de Docker respecto del plan (§5, Etapa 4) **solo para la base de datos**. El razonamiento, por si vuelve a discutirse:
+
+- La Etapa 4 no es "usar Docker", es **dockerizar la aplicación** (Dockerfile propio + compose que levante app y base juntas). Correr un Postgres en contenedor como dependencia de infraestructura no toca ese objetivo: en la Etapa 4 se le agrega el servicio `app` al mismo `docker-compose.yml`, no se rehace nada.
+- **Testcontainers (Etapa 3) requiere Docker igual.** No hay forma de esquivarlo, así que conviene tenerlo funcionando desde temprano con algo simple.
+- Evita instalar y administrar un Postgres nativo, que es conocimiento específico de la distro y poco transferible. Lo que sí es transferible —`psql`, SQL, roles, leer un `EXPLAIN`— se practica igual contra el contenedor.
+
+Esteban preguntó explícitamente si no era más provechoso instalar Postgres a mano. La distinción que zanjó el tema: **Docker le ahorra la *instalación*, no la *configuración*.** Los tres valores del compose (usuario, contraseña, base) son los mismos conceptos que configuraría a mano.
+
+### Requisitos de la máquina (Ubuntu)
+
+Todo sale de los repos de la distro; **no hace falta el repo externo de Docker** ni el snap (el snap corre confinado y da problemas con bind mounts y Testcontainers).
+
+```bash
+sudo apt update && sudo apt install -y docker.io docker-compose-v2 postgresql-client
+sudo usermod -aG docker $USER
+```
+
+Después del `usermod` hay que **cerrar sesión y volver a entrar** — los grupos no se refrescan en sesiones ya abiertas. Es el clásico "lo hice y sigue pidiendo sudo".
+
+> Nota de seguridad, asumida a conciencia: pertenecer al grupo `docker` equivale a tener root permanente sin contraseña (el daemon corre como root y se le puede pedir que monte cualquier ruta del host dentro de un contenedor donde sos UID 0). Aceptable en una máquina personal de desarrollo; nunca en un servidor compartido.
+
+Versiones verificadas en Ubuntu 26.04: Docker 29.1.3, Compose 2.40.3, psql 18.4.
+
+### El contrato de credenciales
+
+`docker-compose.yml` (en la raíz del repo) define el servicio `db` con la imagen `postgres:18`. Estos valores **tienen que coincidir exactamente** con `src/main/resources/application.properties`:
+
+| Parámetro | Valor |
+|---|---|
+| Host / puerto | `localhost:5432` |
+| Base | `tienda_discos` |
+| Usuario | `tienda` |
+| Contraseña | `tienda` |
+
+Contraseña en texto plano a propósito: es una base local de desarrollo. No contradice la regla de hashear con BCrypt las contraseñas de **usuarios** (§6), que sigue vigente.
+
+### Comandos
+
+```bash
+docker compose up -d        # levantar en segundo plano
+docker compose ps           # estado y healthcheck
+docker compose logs -f db   # ver logs
+docker compose down         # parar (los datos sobreviven)
+docker compose down -v      # parar Y BORRAR el volumen (se pierde la base)
+
+psql -h localhost -U tienda -d tienda_discos                  # conectar desde el host
+docker exec -it tienda-discos-db psql -U tienda -d tienda_discos   # conectar desde adentro
+```
+
+### ⚠️ Trampa que más tiempo hace perder
+
+Las variables `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` **solo se aplican la primera vez**, cuando la imagen inicializa un volumen vacío. Si después se cambian en el compose y se hace `up`, **no pasa nada**: el volumen ya tiene la base creada con los valores viejos. Para que tome valores nuevos hay que hacer `docker compose down -v` y volver a levantar.
+
+### Datos
+
+Los datos viven en un volumen Docker con nombre (`postgres_data`), no en el repo. **Las dos PCs no comparten datos**: cada una tiene su propio volumen local. Lo que se sincroniza por Git es el esquema (vía las entidades JPA) y el código, nunca el contenido de las tablas.
+
+---
+
+## 8. ESTADO ACTUAL (actualizar al cerrar cada sesión de trabajo)
+
+*Última actualización: 2026-08-12*
+
+### Hecho
+
+- Proyecto generado con Spring Initializr, coordenadas y paquete base renombrados a `com.estebancardozo`.
+- **Las 7 entidades JPA están escritas** en `entity/`: `Artista`, `Album`, `Edicion`, `Cliente`, `Compra`, `Item`, `Admin` — con anotaciones, relaciones, constraints de nullability y `equals`/`hashCode`.
+- `docker-compose.yml` con el servicio de Postgres (ver §7). Verificado: levanta y responde.
+
+### Pendiente inmediato
+
+1. **`application.properties`** — configurar el datasource. Ahora mismo solo tiene `spring.application.name`, y como hay `spring-boot-starter-data-jpa` en el classpath sin ninguna base embebida, **la app no arranca**: falla en el startup al no poder autoconfigurar el `DataSource`.
+2. **Decidir `spring.jpa.hibernate.ddl-auto`** — tema pedagógico pendiente, todavía no explicado a Esteban. Es lo que determina si Hibernate genera las tablas a partir de las entidades. Discutir `create-drop` vs `update` vs `validate` y por qué en un proyecto sin Flyway (§2) la elección importa.
+3. Verificar el mapeo entrando con `psql` a mirar el DDL que Hibernate generó a partir de las entidades. **Momento pedagógico clave**: ver el `CREATE TABLE` que salió de un `@Entity` es donde se entiende el mapeo de verdad.
+
+### Después (resto de la Etapa 1)
+
+Repositories → Services → Controllers → DTOs y validación → springdoc-openapi. Ninguna de esas carpetas existe todavía.
+
+### Deuda pedagógica
+
+- **El `docker-compose.yml` lo escribió Claude, no Esteban**, a pedido explícito suyo por falta de tiempo, contra la regla 1 de §0. Queda pendiente que lo reescriba desde cero o al menos lo explique línea por línea. Recordárselo cuando se llegue a la Etapa 4.
+- Docker es territorio nuevo: se cubrió el vocabulario mínimo (imagen / contenedor / daemon / volumen) y el modelo de seguridad del grupo `docker`. No dar por dominado nada más que eso.
