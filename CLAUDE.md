@@ -274,6 +274,17 @@ sudo usermod -aG docker $USER
 
 Después del `usermod` hay que **cerrar sesión y volver a entrar** — los grupos no se refrescan en sesiones ya abiertas. Es el clásico "lo hice y sigue pidiendo sudo".
 
+Para diagnosticarlo sin adivinar, comparar las dos fuentes:
+
+```bash
+groups              # grupos de LA SESIÓN ACTUAL
+getent group docker # grupos según EL SISTEMA
+```
+
+Si `docker` aparece en el segundo y no en el primero, es exactamente este caso.
+
+**Atajo si no querés cerrar todo** (IDE, navegador, etc.): `newgrp docker` abre una shell con el grupo ya aplicado. Vale **solo para esa terminal** — las demás y el IDE siguen sin el grupo hasta el logout real. Sirve para desbloquearse en el momento; el logout queda para cuando venga cómodo.
+
 > Nota de seguridad, asumida a conciencia: pertenecer al grupo `docker` equivale a tener root permanente sin contraseña (el daemon corre como root y se le puede pedir que monte cualquier ruta del host dentro de un contenedor donde sos UID 0). Aceptable en una máquina personal de desarrollo; nunca en un servidor compartido.
 
 Versiones verificadas en Ubuntu 26.04: Docker 29.1.3, Compose 2.40.3, psql 18.4.
@@ -308,9 +319,41 @@ docker exec -it tienda-discos-db psql -U tienda -d tienda_discos   # conectar de
 
 Las variables `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` **solo se aplican la primera vez**, cuando la imagen inicializa un volumen vacío. Si después se cambian en el compose y se hace `up`, **no pasa nada**: el volumen ya tiene la base creada con los valores viejos. Para que tome valores nuevos hay que hacer `docker compose down -v` y volver a levantar.
 
+### ⚠️ El path del volumen cambió en Postgres 18
+
+El montaje correcto para `postgres:18` es el **directorio padre**:
+
+```yaml
+volumes:
+  - postgres_data:/var/lib/postgresql      # ✅ Postgres 18+
+# - postgres_data:/var/lib/postgresql/data # ❌ Postgres 17 y anteriores
+```
+
+Motivo: en Postgres 18 la imagen oficial cambió `PGDATA` a una ruta específica por versión (`/var/lib/postgresql/18/docker`) y declara el `VOLUME` en el padre. Montar en `/data` —el path de toda la documentación vieja y de casi cualquier tutorial— apunta a un directorio que Postgres 18 **no usa**.
+
+**Por qué es traicionero:** no falla. El contenedor levanta, `pg_isready` responde, podés crear tablas. Pero el volumen nombrado queda vacío y los datos reales van a un **volumen anónimo**, que se pierde en el primer `docker compose down`. Corregido en el commit `e67284c`.
+
+**Lección transferible, más importante que el detalle de Docker:** que un archivo de configuración arranque sin errores no prueba que esté bien. Este bug sobrevivió justamente porque se validó con el criterio "levanta y responde".
+
+### Sincronizar la otra PC
+
+Después de un `git pull` que traiga este fix, **`up -d` no alcanza** si esa máquina ya había levantado el contenedor antes: sigue teniendo el volumen `postgres_data` vacío y volúmenes anónimos huérfanos con los datos viejos. Hay que limpiar:
+
+```bash
+docker compose down -v   # borra contenedor + volumen nombrado
+docker volume ls         # revisar ANTES de prune (ver advertencia)
+docker volume prune      # borra los anónimos huérfanos
+```
+
+⚠️ `prune` borra **todos** los volúmenes sin usar de la máquina, no solo los de este proyecto. Si hay otros proyectos con contenedores parados, se llevan puestos sus datos.
+
+*(En la PC Lenovo esto no hizo falta: `docker volume ls` no devolvió ninguna fila, así que nunca se había levantado el contenedor ahí.)*
+
 ### Datos
 
 Los datos viven en un volumen Docker con nombre (`postgres_data`), no en el repo. **Las dos PCs no comparten datos**: cada una tiene su propio volumen local. Lo que se sincroniza por Git es el esquema (vía las entidades JPA) y el código, nunca el contenido de las tablas.
+
+Todo lo que necesita la otra PC para levantar un entorno idéntico (nombre del contenedor, credenciales, puerto, imagen) vive dentro del `docker-compose.yml` versionado. No hay nada que configurar a mano: `git pull` y listo.
 
 ---
 
@@ -322,7 +365,8 @@ Los datos viven en un volumen Docker con nombre (`postgres_data`), no en el repo
 
 - Proyecto generado con Spring Initializr, coordenadas y paquete base renombrados a `com.estebancardozo`.
 - **Las 7 entidades JPA están escritas** en `entity/`: `Artista`, `Album`, `Edicion`, `Cliente`, `Compra`, `Item`, `Admin` — con anotaciones, relaciones, constraints de nullability y `equals`/`hashCode`.
-- `docker-compose.yml` con el servicio de Postgres (ver §7). Verificado: levanta y responde.
+- `docker-compose.yml` con el servicio de Postgres (ver §7). **Corregido el path del volumen para Postgres 18** (commit `e67284c`) — antes apuntaba al path de Postgres 17 y los datos no persistían. Verificado en la PC Lenovo: levanta y `docker volume ls` muestra solo el volumen nombrado, sin anónimos.
+- **Esteban entendió el `docker-compose.yml` línea por línea** (sesión del 2026-08-12): estructura de dos secciones, `image`, `container_name`, `environment` (con la trampa de las `POSTGRES_*`), `ports`, `volumes`, `healthcheck` y `restart`.
 
 ### Pendiente inmediato
 
@@ -336,5 +380,16 @@ Repositories → Services → Controllers → DTOs y validación → springdoc-o
 
 ### Deuda pedagógica
 
-- **El `docker-compose.yml` lo escribió Claude, no Esteban**, a pedido explícito suyo por falta de tiempo, contra la regla 1 de §0. Queda pendiente que lo reescriba desde cero o al menos lo explique línea por línea. Recordárselo cuando se llegue a la Etapa 4.
-- Docker es territorio nuevo: se cubrió el vocabulario mínimo (imagen / contenedor / daemon / volumen) y el modelo de seguridad del grupo `docker`. No dar por dominado nada más que eso.
+- ~~**El `docker-compose.yml` lo escribió Claude, no Esteban**~~ → **SALDADA** el 2026-08-12. Se recorrió clave por clave con método socrático y él corrigió el bug del path del volumen. **No se dio por dominado**: entender un archivo leyéndolo no es lo mismo que escribirlo. En la Etapa 4, cuando toque agregar el servicio `app`, **que lo escriba él desde cero sin mirar el actual**.
+- Docker es territorio nuevo: se cubrió el vocabulario mínimo (imagen / contenedor / daemon / volumen), el modelo de seguridad del grupo `docker`, el aislamiento de red del contenedor (`host:contenedor` en `ports` y `volumes`) y la diferencia entre capa de escritura / volumen anónimo / volumen nombrado. No dar por dominado nada más que eso.
+
+### Confusiones de vocabulario a vigilar
+
+Aparecieron durante la sesión del 2026-08-12 y conviene corregirlas si reaparecen:
+
+- **Dirección vs. puerto** — dijo "5433 es la dirección de mi Ubuntu". La dirección es `localhost`; 5433 es el puerto. Dos conceptos separados (`psql -h` vs `-p`).
+- **"Nombre del puerto"** — los puertos no tienen nombre, son solo números. En `5432:5432` hay dos puertos distintos que casualmente coinciden.
+- **Contenedor vs. volumen** — los usó como sinónimos al leer la salida de `docker volume ls`.
+- **"Deprecado"** — lo usó para un path que simplemente cambia y rompe en silencio. Deprecado implica que sigue funcionando y avisa; no es el caso.
+
+Tendencia general observada: al explicar el *porqué* de un comportamiento técnico, tiende a atribuir **intención o precaución** al sistema ("cambiarla podría ser riesgoso") en vez de describir el **mecanismo** ("el bloque que lee esas variables no se ejecuta"). Vale la pena empujarlo hacia el mecanismo cada vez que pase.
