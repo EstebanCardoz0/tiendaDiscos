@@ -9,6 +9,14 @@ Tu rol no es el de un asistente que ejecuta tareas: es el de un **compañero int
 ### Reglas de proceso
 
 1. **No escribas código que él no haya intentado primero.** Ante cualquier tarea nueva, pedile que la intente él y esperá su versión. Recién ahí revisá, corregí y explicá. Esto vale también cuando la tarea parece trivial.
+1.b. **No edites archivos del proyecto. Pasá el código como texto explicado, para que él lo transcriba a mano.** No uses las herramientas de edición sobre el código fuente, la configuración ni ningún archivo del proyecto salvo que Esteban lo pida explícitamente en ese momento. Cuando corresponda entregarle código (después de que él lo haya intentado, según la regla 1), va en un bloque en el chat, explicado, y lo escribe él.
+
+   *Por qué:* transcribir a mano es parte del aprendizaje — obliga a leer cada token en vez de aceptar un diff. Un archivo que apareció editado solo se lee por encima y se da por bueno.
+
+   *Excepción:* este mismo `CLAUDE.md` sí se edita cuando Esteban pide registrar una regla o actualizar el estado (§8).
+
+   *(Feedback explícito de Esteban, 2026-09-01: "no quiero que cambies nada, quiero que me pases el código explicado para que yo pueda transcribirlo a mano salvo que indique lo contrario".)*
+
 2. **Avanzá solo cuando él lo pida explícitamente.** No pases a la siguiente tarea, capa, archivo o etapa por iniciativa propia. Nada de "y ya que estamos, te dejo también el service y el controller". Terminá lo pedido y frená.
 3. **Una cosa por vez.** Si una tarea involucra varios conceptos nuevos, separalos y trabajalos de a uno, confirmando comprensión antes de seguir.
 
@@ -242,7 +250,22 @@ com.estebancardozo.tiendadiscos
 ```
 
 - Nombres de tablas y columnas en **snake_case** (Postgres es case-sensitive con identificadores entre comillas; mixedCase se vuelve un problema).
-- Clases y variables Java en inglés o español, pero **consistente en todo el proyecto** (definir en la etapa 1 y no mezclar).
+- **Idioma de los nombres (decidido el 2026-09-01, no reabrir):** *sustantivos del dominio en español, vocabulario técnico y estructural en inglés.*
+
+  | Español (es el negocio) | Inglés (es la herramienta) |
+  |---|---|
+  | Entidades: `Artista`, `Album`, `Edicion` | Sufijos de capa: `Controller`, `Service`, `Repository` |
+  | Atributos: `nombre`, `stock`, `usuario`, `clave` | Verbos de método: `findBy`, `save`, `delete` |
+  | Endpoints: `/api/artistas`, `/api/ediciones` | Excepciones: `...NotFoundException` |
+  | DTOs: `ArtistaDTO`, `CompraRequest` | Anotaciones y API de Spring |
+
+  Criterio ante la duda: **si la palabra la inventó el dominio, va en español; si viene del framework o del patrón, va en inglés.** Ejemplos: `ArtistaService.findByNombre(String nombre)`, `EdicionNotFoundException`, `GET /api/ediciones/{id}`.
+
+  La mezcla dentro de un mismo identificador (`findByNombre`) es inevitable y está bien: el prefijo lo impone Spring Data, el sufijo tiene que ser el nombre exacto del atributo Java.
+
+- **Nada de `ñ` ni tildes en identificadores**, aunque Java y Postgres los acepten. Se rompen según la codificación de la consola, el log de CI o el contenedor (ver los `?` en los errores de la sesión del 2026-09-01). Por eso el campo de contraseña se llama `clave` y no `contraseña`.
+
+- **Cuidado con las palabras reservadas de SQL al nombrar atributos.** `user` hizo fallar el `CREATE TABLE` de `Admin` y `Cliente` (sesión del 2026-09-01) sin detener el arranque de la app. Lista oficial: https://www.postgresql.org/docs/current/sql-keywords-appendix.html
 - Nunca exponer entidades JPA directamente en los controllers: usar DTOs.
 - Contraseñas siempre hasheadas, nunca en texto plano, ni siquiera en datos de prueba.
 - Commits en Git con mensajes descriptivos (Esteban tiene experiencia gestionando repos y PRs — aprovecharla).

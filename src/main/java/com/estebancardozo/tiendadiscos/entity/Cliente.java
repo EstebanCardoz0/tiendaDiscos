@@ -29,9 +29,9 @@ public class Cliente {
   @Column(nullable = false, unique = true)
   private String mail;
   @Column(nullable = false, unique = true)
-  private String user;
+  private String usuario;
   @Column(nullable = false)
-  private String pass;
+  private String clave;
 
   @Override
   public boolean equals(Object o) {

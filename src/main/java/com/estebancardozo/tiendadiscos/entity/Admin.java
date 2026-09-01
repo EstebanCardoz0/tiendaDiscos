@@ -21,9 +21,9 @@ public class Admin {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
   @Column(unique = true, nullable = false)
-  private String user;
+  private String usuario;
   @Column(nullable = false)
-  private String pass;
+  private String clave;
 
   @Override
   public boolean equals(Object i) {

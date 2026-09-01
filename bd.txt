@@ -1,3 +1,7 @@
+
+.\mvnw.cmd spring-boot:run
+
+
 erDiagram
     ARTISTA ||--o{ ALBUM : compone
     ALBUM ||--o{ EDICION : tiene
