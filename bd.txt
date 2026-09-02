@@ -1,5 +1,7 @@
 
 .\mvnw.cmd spring-boot:run
+docker exec -it tienda-discos-db psql -U tienda -d tienda_discos  # entrar a la base
+
 
 
 erDiagram

@@ -312,6 +312,51 @@ Si `docker` aparece en el segundo y no en el primero, es exactamente este caso.
 
 Versiones verificadas en Ubuntu 26.04: Docker 29.1.3, Compose 2.40.3, psql 18.4.
 
+### Requisitos de la máquina (Windows)
+
+En Windows el entorno es **Docker Desktop**, y hay dos diferencias respecto de Ubuntu que ya costaron tiempo (sesión del 2026-09-01):
+
+**1. El daemon no arranca solo.** En Ubuntu Docker es un servicio de systemd; en Windows el daemon vive dentro de Docker Desktop, que es una aplicación de escritorio. **Hay que abrirla a mano** antes de cualquier `docker ...`. Si no está abierta, el síntoma es:
+
+```
+failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
+```
+
+Eso significa que el cliente `docker` se ejecutó bien pero no encontró al daemon del otro lado del named pipe. No es un problema del proyecto.
+
+**2. ⚠️ Hay un PostgreSQL 18 instalado nativamente que compite por el puerto 5432.**
+
+Es el bug que más tiempo consumió el 2026-09-01. Windows permite que dos procesos escuchen el mismo puerto en distintas interfaces, así que **ninguno de los dos falla al arrancar**: el contenedor levanta, `pg_isready` responde `healthy`, y sin embargo las conexiones que entran desde afuera llegan al Postgres nativo, que no tiene el usuario `tienda`.
+
+Síntoma: `FATAL: password authentication failed for user "tienda"` (`SQLState 28P01`) desde la app, mientras `docker exec -it tienda-discos-db psql -U tienda -d tienda_discos` funciona perfecto.
+
+**Por qué engaña:** Postgres devuelve el mismo mensaje cuando el rol no existe que cuando la contraseña es incorrecta (deliberado, para no filtrar qué usuarios existen). Y `docker exec` entra por el socket local, que el `pg_hba.conf` de la imagen resuelve con `trust` — **nunca verifica la contraseña**, así que no prueba nada.
+
+Diagnóstico:
+
+```powershell
+Get-Process -Id (Get-NetTCPConnection -LocalPort 5432 -State Listen).OwningProcess
+```
+
+Si aparece un proceso `postgres` además de `com.docker.backend`, es este caso.
+
+Estado actual: **el servicio quedó detenido y en arranque `Manual`** (no desinstalado, no se borró ninguna base):
+
+```powershell
+Stop-Service -Name postgresql-x64-18
+Set-Service -Name postgresql-x64-18 -StartupType Manual
+```
+
+Para revertirlo algún día: `Set-Service ... -StartupType Automatic` y `Start-Service`.
+
+**3. `psql` no está instalado en Windows.** Se usa el del contenedor. Y para probar la conexión *desde afuera* —el camino que recorre la app— hay que levantar un cliente efímero, porque `docker exec` no sirve para eso:
+
+```powershell
+docker run --rm -it postgres:18 psql -h host.docker.internal -U tienda -d tienda_discos
+```
+
+`host.docker.internal` es el nombre que, en Docker Desktop, resuelve a la máquina host.
+
 ### El contrato de credenciales
 
 `docker-compose.yml` (en la raíz del repo) define el servicio `db` con la imagen `postgres:18`. Estos valores **tienen que coincidir exactamente** con `src/main/resources/application.properties`:
@@ -382,37 +427,59 @@ Todo lo que necesita la otra PC para levantar un entorno idéntico (nombre del c
 
 ## 8. ESTADO ACTUAL (actualizar al cerrar cada sesión de trabajo)
 
-*Última actualización: 2026-08-12*
+*Última actualización: 2026-09-01*
 
 ### Hecho
 
 - Proyecto generado con Spring Initializr, coordenadas y paquete base renombrados a `com.estebancardozo`.
-- **Las 7 entidades JPA están escritas** en `entity/`: `Artista`, `Album`, `Edicion`, `Cliente`, `Compra`, `Item`, `Admin` — con anotaciones, relaciones, constraints de nullability y `equals`/`hashCode`.
-- `docker-compose.yml` con el servicio de Postgres (ver §7). **Corregido el path del volumen para Postgres 18** (commit `e67284c`) — antes apuntaba al path de Postgres 17 y los datos no persistían. Verificado en la PC Lenovo: levanta y `docker volume ls` muestra solo el volumen nombrado, sin anónimos.
-- **Esteban entendió el `docker-compose.yml` línea por línea** (sesión del 2026-08-12): estructura de dos secciones, `image`, `container_name`, `environment` (con la trampa de las `POSTGRES_*`), `ports`, `volumes`, `healthcheck` y `restart`.
+- **Las 7 entidades JPA están escritas** en `entity/`: `Artista`, `Album`, `Edicion`, `Cliente`, `Compra`, `Item`, `Admin`.
+- `docker-compose.yml` con el servicio de Postgres (ver §7), con el path del volumen corregido para Postgres 18 (commit `e67284c`).
+- **`application.properties` completo**: datasource + `spring.jpa.hibernate.ddl-auto=create`.
+- **`pom.xml`**: `<jvmArguments>-Duser.timezone=UTC</jvmArguments>` en el `spring-boot-maven-plugin`.
+- **La app arranca y genera las 7 tablas.** Esquema verificado con `psql` en `artista`, `album` y `edicion`.
+- **`Edicion` tiene `@Table(check = @CheckConstraint(constraint = "stock >= 0"))`**, verificado con un `INSERT` que la base rechaza.
+
+### Decisiones de la sesión 2026-09-01 (no reabrir)
+
+- **`ddl-auto=create`** para la Etapa 1. Descartados: `update` (nunca borra ni modifica columnas, arrastra el esquema viejo tras cada rename) y `validate` (no crea nada, y la base estaba vacía). `create` en vez de `create-drop` para poder inspeccionar el DDL con `psql` después de apagar la app. **Revisar esta elección al llegar a la Etapa 3** (tests) y a la 6.
+- **Zona horaria UTC** en la JVM. Se guardan instantes absolutos; la conversión a hora local es problema del cliente.
+- **Idioma de identificadores** → ver §6, ya documentado.
 
 ### Pendiente inmediato
 
-1. **`application.properties`** — configurar el datasource. Ahora mismo solo tiene `spring.application.name`, y como hay `spring-boot-starter-data-jpa` en el classpath sin ninguna base embebida, **la app no arranca**: falla en el startup al no poder autoconfigurar el `DataSource`.
-2. **Decidir `spring.jpa.hibernate.ddl-auto`** — tema pedagógico pendiente, todavía no explicado a Esteban. Es lo que determina si Hibernate genera las tablas a partir de las entidades. Discutir `create-drop` vs `update` vs `validate` y por qué en un proyecto sin Flyway (§2) la elección importa.
-3. Verificar el mapeo entrando con `psql` a mirar el DDL que Hibernate generó a partir de las entidades. **Momento pedagógico clave**: ver el `CREATE TABLE` que salió de un `@Entity` es donde se entiende el mapeo de verdad.
-
-### Después (resto de la Etapa 1)
-
-Repositories → Services → Controllers → DTOs y validación → springdoc-openapi. Ninguna de esas carpetas existe todavía.
+1. **Commit de todo lo anterior** — al cierre de la sesión seguía sin versionar.
+2. Revisar el DDL de las 4 tablas que faltan: `item`, `compra`, `cliente`, `admin`. `item` es la más interesante (tabla puente con dos FKs y `precio_unitario`).
+3. Resto de la Etapa 1: repositories → services → controllers → DTOs y validación → springdoc-openapi. Ninguna de esas carpetas existe todavía.
 
 ### Deuda pedagógica
 
-- ~~**El `docker-compose.yml` lo escribió Claude, no Esteban**~~ → **SALDADA** el 2026-08-12. Se recorrió clave por clave con método socrático y él corrigió el bug del path del volumen. **No se dio por dominado**: entender un archivo leyéndolo no es lo mismo que escribirlo. En la Etapa 4, cuando toque agregar el servicio `app`, **que lo escriba él desde cero sin mirar el actual**.
-- Docker es territorio nuevo: se cubrió el vocabulario mínimo (imagen / contenedor / daemon / volumen), el modelo de seguridad del grupo `docker`, el aislamiento de red del contenedor (`host:contenedor` en `ports` y `volumes`) y la diferencia entre capa de escritura / volumen anónimo / volumen nombrado. No dar por dominado nada más que eso.
+- ~~`docker-compose.yml` escrito por Claude~~ → SALDADA el 2026-08-12. **Pero no se da por dominado**: en la Etapa 4, cuando toque agregar el servicio `app`, **que lo escriba él desde cero sin mirar el actual**.
+- ~~`BigDecimal` para `precio` lo recomendó Claude sin explicar el porqué~~ → SALDADA el 2026-09-01 (IEEE 754, acumulación de error, demostrado con `SELECT 0.1::float8 + 0.2::float8`). Queda pendiente de aparecer en la práctica: **`BigDecimal` se compara con `compareTo()`, no con `equals()`** — avisar cuando escriba tests (Etapa 3).
+- Docker: cubierto el vocabulario mínimo (imagen / contenedor / daemon / volumen), el grupo `docker`, `ports`/`volumes` y los tipos de volumen. Nada más.
+- **`@Version` y optimistic locking (Etapa 2): el terreno ya está preparado.** El 2026-09-01 razonó solo el escenario de *lost update* con dos hilos y entendió que el `CHECK` no lo detecta (los dos escriben 0, nunca -1). Retomar desde ahí, no desde cero.
 
-### Confusiones de vocabulario a vigilar
+### Cómo trabaja Esteban — patrones observados
 
-Aparecieron durante la sesión del 2026-08-12 y conviene corregirlas si reaparecen:
+- **Saltea las preguntas de verificación.** Varias veces respondió la salida de un comando en vez de la pregunta, o directamente pasó de largo. Hay que repreguntar explícitamente; no darlo por entendido porque siguió adelante.
+- **Pide el código hecho antes que intentarlo** (ver regla 1.b). Aceptable para sintaxis; **no** para decisiones de diseño — ahí hay que hacerlo elegir y justificar.
+- **Vuelve a preguntar comandos ya dados** (`docker compose up`, entrar a `psql`). Los está juntando en `bd.txt`; conviene apuntarlo ahí y, más adelante, al README.
+- **Al explicar mecanismos, atribuye intención al sistema** ("quiere protegerme") en vez de describir el mecanismo ("la base vive en otro proceso"). Empujarlo al mecanismo cada vez.
+- Usó "deprecado" correctamente el 2026-09-01 (era una confusión anterior). Detectó él mismo el aviso de deprecación de `@Check`.
 
-- **Dirección vs. puerto** — dijo "5433 es la dirección de mi Ubuntu". La dirección es `localhost`; 5433 es el puerto. Dos conceptos separados (`psql -h` vs `-p`).
-- **"Nombre del puerto"** — los puertos no tienen nombre, son solo números. En `5432:5432` hay dos puertos distintos que casualmente coinciden.
-- **Contenedor vs. volumen** — los usó como sinónimos al leer la salida de `docker volume ls`.
-- **"Deprecado"** — lo usó para un path que simplemente cambia y rompe en silencio. Deprecado implica que sigue funcionando y avisa; no es el caso.
+### Errores conceptuales corregidos (vigilar si reaparecen)
 
-Tendencia general observada: al explicar el *porqué* de un comportamiento técnico, tiende a atribuir **intención o precaución** al sistema ("cambiarla podría ser riesgoso") en vez de describir el **mecanismo** ("el bloque que lee esas variables no se ejecuta"). Vale la pena empujarlo hacia el mecanismo cada vez que pase.
+- Creyó que **`not null` garantiza que el stock no sea negativo**. Son tres cosas distintas: existencia del valor (`not null`), tipo (`integer`) y rango (`CHECK`).
+- Creyó que **`validate` valida y después aplica**. No aplica nunca nada.
+- Confusión de capas: preguntó si `create-drop` era "algo de Docker o de Postgres". Es de Hibernate. Ante cualquier comportamiento raro, insistir en la pregunta **"¿quién lo hace?"** antes que "¿dónde pasa?".
+- De sesiones anteriores: dirección vs. puerto, "nombre del puerto", contenedor vs. volumen.
+
+### Hilo conductor de la sesión 2026-09-01 (sirve como material de futuras explicaciones)
+
+Cuatro bugs, **todos con el mismo patrón: el sistema arranca, responde, y está mal.**
+
+1. `ddl-auto` sin definir → default `none` en bases no embebidas; la app arrancaba sin crear tablas.
+2. **Un PostgreSQL 18 nativo de Windows competía por el puerto 5432** con el contenedor (ver §7).
+3. `invalid value for parameter "TimeZone"` — Windows reporta el alias obsoleto `America/Buenos_Aires`, que Postgres 18 no conoce.
+4. `user` es palabra reservada de SQL → el `CREATE TABLE` de `admin` y `cliente` falló **como `WARN`, sin detener el arranque**; quedaron 5 de 7 tablas.
+
+El método que funcionó y conviene sostener: **predecir antes de mirar**, y **verificar por el camino que falla**, no por otro (el `docker exec ... psql` entraba por `trust` y no probaba nada sobre la contraseña).
