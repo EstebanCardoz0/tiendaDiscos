@@ -19,7 +19,7 @@ import lombok.Setter;
 @Entity
 @Getter
 @Setter
-@Table(check = {@CheckConstraint(constraint = "cantidad >=1"), @CheckConstraint(constraint = "precio_unitario >=0")})
+@Table(check = { @CheckConstraint(constraint = "cantidad >=1"), @CheckConstraint(constraint = "precio_unitario >=0") })
 @NoArgsConstructor
 @AllArgsConstructor
 public class Item {

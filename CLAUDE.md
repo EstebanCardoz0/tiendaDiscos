@@ -427,7 +427,7 @@ Todo lo que necesita la otra PC para levantar un entorno idéntico (nombre del c
 
 ## 8. ESTADO ACTUAL (actualizar al cerrar cada sesión de trabajo)
 
-*Última actualización: 2026-09-01*
+*Última actualización: 2026-09-02*
 
 ### Hecho
 
@@ -438,6 +438,10 @@ Todo lo que necesita la otra PC para levantar un entorno idéntico (nombre del c
 - **`pom.xml`**: `<jvmArguments>-Duser.timezone=UTC</jvmArguments>` en el `spring-boot-maven-plugin`.
 - **La app arranca y genera las 7 tablas.** Esquema verificado con `psql` en `artista`, `album` y `edicion`.
 - **`Edicion` tiene `@Table(check = @CheckConstraint(constraint = "stock >= 0"))`**, verificado con un `INSERT` que la base rechaza.
+- **Todo lo anterior está commiteado.** Working tree limpio; último commit `2005453` ("Documentar convencion de idioma, entorno Windows y estado de la sesion").
+- **Las 7 tablas dadas por revisadas el 2026-09-02.** Aclaración de trazabilidad: Esteban las revisó por su cuenta y las declaró aprobadas; la comprobación no se hizo en sesión y no quedó registrada la salida de `psql`. Si algo estuviera mal en las dos FKs de `item`, va a aparecer al escribir el primer repository — no dar por sentado que ya está descartado.
+
+**Setup cerrado.** Lo que queda es Etapa 1 propiamente dicha.
 
 ### Decisiones de la sesión 2026-09-01 (no reabrir)
 
@@ -447,9 +451,9 @@ Todo lo que necesita la otra PC para levantar un entorno idéntico (nombre del c
 
 ### Pendiente inmediato
 
-1. **Commit de todo lo anterior** — al cierre de la sesión seguía sin versionar.
-2. Revisar el DDL de las 4 tablas que faltan: `item`, `compra`, `cliente`, `admin`. `item` es la más interesante (tabla puente con dos FKs y `precio_unitario`).
-3. Resto de la Etapa 1: repositories → services → controllers → DTOs y validación → springdoc-openapi. Ninguna de esas carpetas existe todavía.
+1. **Etapa 1: repositories → services → controllers → DTOs y validación → springdoc-openapi.** Ninguna de esas carpetas existe todavía: el paquete base solo tiene `TiendaDiscosApplication.java` y `entity/`. Arrancar por `repository/`, con `Artista` y `Album` (§5).
+
+*(Saldados el 2026-09-02: el commit pendiente y la revisión del DDL de `item`, `compra`, `cliente` y `admin`.)*
 
 ### Deuda pedagógica
 
@@ -461,6 +465,7 @@ Todo lo que necesita la otra PC para levantar un entorno idéntico (nombre del c
 ### Cómo trabaja Esteban — patrones observados
 
 - **Saltea las preguntas de verificación.** Varias veces respondió la salida de un comando en vez de la pregunta, o directamente pasó de largo. Hay que repreguntar explícitamente; no darlo por entendido porque siguió adelante.
+- **Ante la repregunta, responde con la conclusión y pide confianza** ("está todo eso, confía en mí") en vez de contestar el contenido. Pasó el 2026-09-02 con las FKs de `item`, preguntado dos veces. No es motivo para desconfiar del dato, pero sí conviene **reformular la pregunta como parte del trabajo siguiente** en lugar de insistir de frente: preguntarla cuando escriba el repository, donde la respuesta se usa para algo, funciona mejor que pedirla en abstracto.
 - **Pide el código hecho antes que intentarlo** (ver regla 1.b). Aceptable para sintaxis; **no** para decisiones de diseño — ahí hay que hacerlo elegir y justificar.
 - **Vuelve a preguntar comandos ya dados** (`docker compose up`, entrar a `psql`). Los está juntando en `bd.txt`; conviene apuntarlo ahí y, más adelante, al README.
 - **Al explicar mecanismos, atribuye intención al sistema** ("quiere protegerme") en vez de describir el mecanismo ("la base vive en otro proceso"). Empujarlo al mecanismo cada vez.
