@@ -12,7 +12,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.CheckConstraint;
 
 @Entity
-@Table(check = @CheckConstraint(constraint = "stock >=0"))
+@Table(check = { @CheckConstraint(constraint = "stock >=0"), @CheckConstraint(constraint = "precio >=0") })
 @Getter
 @Setter
 @AllArgsConstructor
