@@ -1,7 +1,6 @@
 package com.estebancardozo.tiendadiscos.entity;
 
-import java.sql.Date;
-
+import java.time.Instant;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -27,7 +26,7 @@ public class Compra {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
   @Column(nullable = false)
-  private Date fecha;
+  private Instant fecha;
   @Column(nullable = false, precision = 10, scale = 2)
   private BigDecimal monto;
   @ManyToOne
