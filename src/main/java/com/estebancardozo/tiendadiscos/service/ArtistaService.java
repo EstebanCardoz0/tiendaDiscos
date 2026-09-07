@@ -31,10 +31,20 @@ public class ArtistaService {
     return artistaRepo.save(artista);
   }
 
-public Artista update(Long id, Artista artista){
-  Artista ar= this.findById(id);
-  artista.setId(id);
-  return artistaRepo.save(artista);
-}
+  public Artista update(Long id, Artista artista) {
+    if (!artistaRepo.existsById(id)) {
+      throw new ArtistaNotFoundException(id);
+    }
+    artista.setId(id);
+    return artistaRepo.save(artista);
+  }
+
+  public void delete(Long id) {
+    if (!artistaRepo.existsById(id)) {
+      throw new ArtistaNotFoundException(id);
+    }
+    artistaRepo.deleteById(id);
+    
+  }
 
 }

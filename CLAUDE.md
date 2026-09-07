@@ -263,9 +263,9 @@ com.estebancardozo.tiendadiscos
 
   La mezcla dentro de un mismo identificador (`findByNombre`) es inevitable y está bien: el prefijo lo impone Spring Data, el sufijo tiene que ser el nombre exacto del atributo Java.
 
-- **Nada de `ñ` ni tildes en identificadores**, aunque Java y Postgres los acepten. Se rompen según la codificación de la consola, el log de CI o el contenedor (ver los `?` en los errores de la sesión del 2026-09-01). Por eso el campo de contraseña se llama `clave` y no `contraseña`.
+- **Nada de `ñ` ni tildes en identificadores**, aunque Java y Postgres los acepten. Se rompen según la codificación de la consola, el log de CI o el contenedor (aparecen como `?` en los mensajes de error). Por eso el campo de contraseña se llama `clave` y no `contraseña`.
 
-- **Cuidado con las palabras reservadas de SQL al nombrar atributos.** `user` hizo fallar el `CREATE TABLE` de `Admin` y `Cliente` (sesión del 2026-09-01) sin detener el arranque de la app. Lista oficial: https://www.postgresql.org/docs/current/sql-keywords-appendix.html
+- **Cuidado con las palabras reservadas de SQL al nombrar atributos.** `user` hizo fallar el `CREATE TABLE` de `Admin` y `Cliente` sin detener el arranque de la app. Lista oficial: https://www.postgresql.org/docs/current/sql-keywords-appendix.html
 - Nunca exponer entidades JPA directamente en los controllers: usar DTOs.
 - Contraseñas siempre hasheadas, nunca en texto plano, ni siquiera en datos de prueba.
 - Commits en Git con mensajes descriptivos (Esteban tiene experiencia gestionando repos y PRs — aprovecharla).
@@ -284,7 +284,7 @@ Se adelantó el uso de Docker respecto del plan (§5, Etapa 4) **solo para la ba
 - **Testcontainers (Etapa 3) requiere Docker igual.** No hay forma de esquivarlo, así que conviene tenerlo funcionando desde temprano con algo simple.
 - Evita instalar y administrar un Postgres nativo, que es conocimiento específico de la distro y poco transferible. Lo que sí es transferible —`psql`, SQL, roles, leer un `EXPLAIN`— se practica igual contra el contenedor.
 
-Esteban preguntó explícitamente si no era más provechoso instalar Postgres a mano. La distinción que zanjó el tema: **Docker le ahorra la *instalación*, no la *configuración*.** Los tres valores del compose (usuario, contraseña, base) son los mismos conceptos que configuraría a mano.
+Si vuelve la duda de si no convenía instalar Postgres a mano, la distinción que zanja el tema: **Docker ahorra la *instalación*, no la *configuración*.** Los tres valores del compose (usuario, contraseña, base) son los mismos conceptos que se configurarían a mano.
 
 ### Requisitos de la máquina (Ubuntu)
 
@@ -310,11 +310,9 @@ Si `docker` aparece en el segundo y no en el primero, es exactamente este caso.
 
 > Nota de seguridad, asumida a conciencia: pertenecer al grupo `docker` equivale a tener root permanente sin contraseña (el daemon corre como root y se le puede pedir que monte cualquier ruta del host dentro de un contenedor donde sos UID 0). Aceptable en una máquina personal de desarrollo; nunca en un servidor compartido.
 
-Versiones verificadas en Ubuntu 26.04: Docker 29.1.3, Compose 2.40.3, psql 18.4.
-
 ### Requisitos de la máquina (Windows)
 
-En Windows el entorno es **Docker Desktop**, y hay dos diferencias respecto de Ubuntu que ya costaron tiempo (sesión del 2026-09-01):
+En Windows el entorno es **Docker Desktop**, con dos diferencias respecto de Ubuntu que ya costaron tiempo:
 
 **1. El daemon no arranca solo.** En Ubuntu Docker es un servicio de systemd; en Windows el daemon vive dentro de Docker Desktop, que es una aplicación de escritorio. **Hay que abrirla a mano** antes de cualquier `docker ...`. Si no está abierta, el síntoma es:
 
@@ -326,7 +324,7 @@ Eso significa que el cliente `docker` se ejecutó bien pero no encontró al daem
 
 **2. ⚠️ Hay un PostgreSQL 18 instalado nativamente que compite por el puerto 5432.**
 
-Es el bug que más tiempo consumió el 2026-09-01. Windows permite que dos procesos escuchen el mismo puerto en distintas interfaces, así que **ninguno de los dos falla al arrancar**: el contenedor levanta, `pg_isready` responde `healthy`, y sin embargo las conexiones que entran desde afuera llegan al Postgres nativo, que no tiene el usuario `tienda`.
+Windows permite que dos procesos escuchen el mismo puerto en distintas interfaces, así que **ninguno de los dos falla al arrancar**: el contenedor levanta, `pg_isready` responde `healthy`, y sin embargo las conexiones que entran desde afuera llegan al Postgres nativo, que no tiene el usuario `tienda`.
 
 Síntoma: `FATAL: password authentication failed for user "tienda"` (`SQLState 28P01`) desde la app, mientras `docker exec -it tienda-discos-db psql -U tienda -d tienda_discos` funciona perfecto.
 
@@ -340,7 +338,7 @@ Get-Process -Id (Get-NetTCPConnection -LocalPort 5432 -State Listen).OwningProce
 
 Si aparece un proceso `postgres` además de `com.docker.backend`, es este caso.
 
-Estado actual: **el servicio quedó detenido y en arranque `Manual`** (no desinstalado, no se borró ninguna base):
+**El servicio está detenido y en arranque `Manual`** (no desinstalado, no se borró ninguna base). Así quedó:
 
 ```powershell
 Stop-Service -Name postgresql-x64-18
@@ -399,13 +397,13 @@ volumes:
 
 Motivo: en Postgres 18 la imagen oficial cambió `PGDATA` a una ruta específica por versión (`/var/lib/postgresql/18/docker`) y declara el `VOLUME` en el padre. Montar en `/data` —el path de toda la documentación vieja y de casi cualquier tutorial— apunta a un directorio que Postgres 18 **no usa**.
 
-**Por qué es traicionero:** no falla. El contenedor levanta, `pg_isready` responde, podés crear tablas. Pero el volumen nombrado queda vacío y los datos reales van a un **volumen anónimo**, que se pierde en el primer `docker compose down`. Corregido en el commit `e67284c`.
+**Por qué es traicionero:** no falla. El contenedor levanta, `pg_isready` responde, podés crear tablas. Pero el volumen nombrado queda vacío y los datos reales van a un **volumen anónimo**, que se pierde en el primer `docker compose down`.
 
 **Lección transferible, más importante que el detalle de Docker:** que un archivo de configuración arranque sin errores no prueba que esté bien. Este bug sobrevivió justamente porque se validó con el criterio "levanta y responde".
 
 ### Sincronizar la otra PC
 
-Después de un `git pull` que traiga este fix, **`up -d` no alcanza** si esa máquina ya había levantado el contenedor antes: sigue teniendo el volumen `postgres_data` vacío y volúmenes anónimos huérfanos con los datos viejos. Hay que limpiar:
+Si una máquina había levantado el contenedor **antes** del fix del path del volumen, `up -d` no alcanza: sigue teniendo el volumen `postgres_data` vacío y volúmenes anónimos huérfanos con los datos viejos. Hay que limpiar:
 
 ```bash
 docker compose down -v   # borra contenedor + volumen nombrado
@@ -413,9 +411,7 @@ docker volume ls         # revisar ANTES de prune (ver advertencia)
 docker volume prune      # borra los anónimos huérfanos
 ```
 
-⚠️ `prune` borra **todos** los volúmenes sin usar de la máquina, no solo los de este proyecto. Si hay otros proyectos con contenedores parados, se llevan puestos sus datos.
-
-*(En la PC Lenovo esto no hizo falta: `docker volume ls` no devolvió ninguna fila, así que nunca se había levantado el contenedor ahí.)*
+⚠️ `prune` borra **todos** los volúmenes sin usar de la máquina, no solo los de este proyecto. Si hay otros proyectos con contenedores parados, se llevan puestos sus datos. Si `docker volume ls` no devuelve ninguna fila, no hay nada que limpiar.
 
 ### Datos
 
@@ -427,64 +423,71 @@ Todo lo que necesita la otra PC para levantar un entorno idéntico (nombre del c
 
 ## 8. ESTADO ACTUAL (actualizar al cerrar cada sesión de trabajo)
 
-*Última actualización: 2026-09-02*
+> **Qué va acá y qué no.** Este archivo es contexto para Claude, no una bitácora de desarrollo. Va lo que **trasciende la sesión**: decisiones tomadas y su porqué, qué falta, qué no está dominado, patrones de trabajo. **No** van hashes de commits, salidas de comandos, narraciones de qué se hizo cada día ni fechas de cada cambio — eso ya está en el historial de Git.
 
-### Hecho
+### Qué existe
 
-- Proyecto generado con Spring Initializr, coordenadas y paquete base renombrados a `com.estebancardozo`.
-- **Las 7 entidades JPA están escritas** en `entity/`: `Artista`, `Album`, `Edicion`, `Cliente`, `Compra`, `Item`, `Admin`.
-- `docker-compose.yml` con el servicio de Postgres (ver §7), con el path del volumen corregido para Postgres 18 (commit `e67284c`).
-- **`application.properties` completo**: datasource + `spring.jpa.hibernate.ddl-auto=create`.
-- **`pom.xml`**: `<jvmArguments>-Duser.timezone=UTC</jvmArguments>` en el `spring-boot-maven-plugin`.
-- **La app arranca y genera las 7 tablas.** Esquema verificado con `psql` en `artista`, `album` y `edicion`.
-- **`Edicion` tiene `@Table(check = @CheckConstraint(constraint = "stock >= 0"))`**, verificado con un `INSERT` que la base rechaza.
-- **Todo lo anterior está commiteado.** Working tree limpio; último commit `2005453` ("Documentar convencion de idioma, entorno Windows y estado de la sesion").
-- **Las 7 tablas dadas por revisadas el 2026-09-02.** Aclaración de trazabilidad: Esteban las revisó por su cuenta y las declaró aprobadas; la comprobación no se hizo en sesión y no quedó registrada la salida de `psql`. Si algo estuviera mal en las dos FKs de `item`, va a aparecer al escribir el primer repository — no dar por sentado que ya está descartado.
+`entity/` (las 7) · `repository/` (las 7, interfaces vacías) · `service/ArtistaService` · `exception/ArtistaNotFoundException` · `docker-compose.yml` · `application.properties`.
 
-**Setup cerrado.** Lo que queda es Etapa 1 propiamente dicha.
+No existen todavía: `controller/`, `dto/`, `config/`, ni el manejador global de excepciones.
 
-### Decisiones de la sesión 2026-09-01 (no reabrir)
+### Decisiones vigentes (no reabrir)
 
-- **`ddl-auto=create`** para la Etapa 1. Descartados: `update` (nunca borra ni modifica columnas, arrastra el esquema viejo tras cada rename) y `validate` (no crea nada, y la base estaba vacía). `create` en vez de `create-drop` para poder inspeccionar el DDL con `psql` después de apagar la app. **Revisar esta elección al llegar a la Etapa 3** (tests) y a la 6.
-- **Zona horaria UTC** en la JVM. Se guardan instantes absolutos; la conversión a hora local es problema del cliente.
-- **Idioma de identificadores** → ver §6, ya documentado.
+**De configuración:**
+
+- **`ddl-auto=create`** para la Etapa 1. Descartados: `update` (nunca borra ni modifica columnas, arrastra el esquema viejo tras cada rename) y `validate` (no crea nada). `create` en vez de `create-drop` para poder inspeccionar el DDL con `psql` después de apagar la app. **Revisar esta elección al llegar a la Etapa 3** (tests) y a la 6.
+- **Zona horaria UTC** en la JVM (`-Duser.timezone=UTC` en el `spring-boot-maven-plugin`). Se guardan instantes absolutos; la conversión a hora local es problema del cliente.
+- **Idioma de identificadores** → ver §6.
+
+**De la capa service** (decididas sobre `ArtistaService`, son la plantilla para los otros seis):
+
+| Decisión | Alternativa descartada y por qué |
+|---|---|
+| Inyección por **constructor**, campo `final` | `@Autowired` sobre el campo: obliga a *reflection* para instanciar la clase en un test unitario. Con constructor, el test es `new ArtistaService(mock)`. Además el `final` garantiza no-null por el lenguaje, no por Spring |
+| Sin `@Autowired` en el constructor | Innecesario con un único constructor (doc oficial). Sí hace falta si hay varios |
+| Excepción `extends RuntimeException` | *Checked*: obligaría a `throws` en todas las firmas hacia arriba para algo de lo que nadie puede recuperarse. Mismo criterio que la jerarquía `DataAccessException` de Spring |
+| La excepción arma su propio mensaje (constructor recibe el `Long id`) | Recibir el `String` ya armado: el texto se duplica en cada `throw` y se desincroniza |
+| `findById` devuelve `Artista` o lanza | Devolver `Optional` (válida, pero obliga a repetir el desenvuelto en cada controller) y devolver `null` (descartada: el tipo miente y el NPE aparece lejos del origen) |
+| `PUT` con **reemplazo total** | Actualización parcial: al deserializar JSON, `null` no distingue "campo ausente" de "borrá este campo". Si se quiere parcial de verdad, va un `PATCH` aparte |
+| `update` toma `(Long id, Artista)` y hace `setId(id)` | El id del cuerpo: la URL manda. Sin el `setId`, `save` inserta una fila nueva |
+| `delete` verifica y lanza `404` | Silencio idempotente. Descartado: el catálogo es público (§4), no hay enumeración de recursos que ocultar. La idempotencia del RFC 9110 es sobre el **estado del servidor**, no sobre el código de respuesta |
+| Retornos sin texto de interfaz (`void` en `delete`) | Devolver `"Artista borrado exitosamente"`: el service no sabe que HTTP existe |
 
 ### Pendiente inmediato
 
-1. **Etapa 1: repositories → services → controllers → DTOs y validación → springdoc-openapi.** Ninguna de esas carpetas existe todavía: el paquete base solo tiene `TiendaDiscosApplication.java` y `entity/`. Arrancar por `repository/`, con `Artista` y `Album` (§5).
+1. **`ArtistaController`** + el `@RestControllerAdvice` en `exception/` que traduzca `ArtistaNotFoundException` a `404`.
+2. Después: DTOs y validación (ahí se resuelve lo de no exponer entidades, §6), y springdoc-openapi.
+3. Los otros seis services, una vez que el patrón de `Artista` esté cerrado de punta a punta.
 
-*(Saldados el 2026-09-02: el commit pendiente y la revisión del DDL de `item`, `compra`, `cliente` y `admin`.)*
+### Deuda pedagógica (lo que NO está dominado)
 
-### Deuda pedagógica
-
-- ~~`docker-compose.yml` escrito por Claude~~ → SALDADA el 2026-08-12. **Pero no se da por dominado**: en la Etapa 4, cuando toque agregar el servicio `app`, **que lo escriba él desde cero sin mirar el actual**.
-- ~~`BigDecimal` para `precio` lo recomendó Claude sin explicar el porqué~~ → SALDADA el 2026-09-01 (IEEE 754, acumulación de error, demostrado con `SELECT 0.1::float8 + 0.2::float8`). Queda pendiente de aparecer en la práctica: **`BigDecimal` se compara con `compareTo()`, no con `equals()`** — avisar cuando escriba tests (Etapa 3).
-- Docker: cubierto el vocabulario mínimo (imagen / contenedor / daemon / volumen), el grupo `docker`, `ports`/`volumes` y los tipos de volumen. Nada más.
-- **`@Version` y optimistic locking (Etapa 2): el terreno ya está preparado.** El 2026-09-01 razonó solo el escenario de *lost update* con dos hilos y entendió que el `CHECK` no lo detecta (los dos escriben 0, nunca -1). Retomar desde ahí, no desde cero.
+- **`docker-compose.yml`**: lo escribió Claude. En la Etapa 4, cuando toque agregar el servicio `app`, **que lo escriba él desde cero sin mirar el actual**.
+- **`ArtistaService.update()`**: terminó dictado por Claude tras tres intentos. Saldarlo haciendo que escriba el `update` de otra entidad de punta a punta, sin mirar el de `Artista`.
+- **Docker**: solo el vocabulario mínimo (imagen / contenedor / daemon / volumen), el grupo `docker`, `ports`/`volumes`. Nada más.
+- **`BigDecimal` se compara con `compareTo()`, no con `equals()`** — avisar cuando escriba tests (Etapa 3).
+- **`@Version` y optimistic locking (Etapa 2): el terreno ya está preparado.** Razonó solo el escenario de *lost update* con dos hilos y entendió que el `CHECK` no lo detecta (los dos escriben 0, nunca -1). Retomar desde ahí, no desde cero.
 
 ### Cómo trabaja Esteban — patrones observados
 
-- **Saltea las preguntas de verificación.** Varias veces respondió la salida de un comando en vez de la pregunta, o directamente pasó de largo. Hay que repreguntar explícitamente; no darlo por entendido porque siguió adelante.
-- **Ante la repregunta, responde con la conclusión y pide confianza** ("está todo eso, confía en mí") en vez de contestar el contenido. Pasó el 2026-09-02 con las FKs de `item`, preguntado dos veces. No es motivo para desconfiar del dato, pero sí conviene **reformular la pregunta como parte del trabajo siguiente** en lugar de insistir de frente: preguntarla cuando escriba el repository, donde la respuesta se usa para algo, funciona mejor que pedirla en abstracto.
+- **Saltea las preguntas de verificación.** Responde la salida de un comando en vez de la pregunta, o pasa de largo. Repreguntar explícitamente; no darlo por entendido porque siguió adelante.
+- **Ante la repregunta, responde con la conclusión y pide confianza** ("está todo eso, confía en mí") en vez de contestar el contenido. Conviene **reformular la pregunta como parte del trabajo siguiente**, donde la respuesta se usa para algo, en lugar de insistir de frente.
+- **⚠️ Razona la opción correcta en la conversación y escribe la otra en el código.** Elige lanzar una excepción y escribe `orElse(null)`; concluye `RuntimeException` y escribe `extends Exception`. No es falta de comprensión: el hábito viejo gana cuando la atención está en la sintaxis. Contramedida acordada: que relea el método completo contra la decisión antes de pasarlo.
+- **Corrige la línea señalada y se lleva puesta la anterior.** Pedirle que relea el método entero, no la línea.
 - **Pide el código hecho antes que intentarlo** (ver regla 1.b). Aceptable para sintaxis; **no** para decisiones de diseño — ahí hay que hacerlo elegir y justificar.
-- **Vuelve a preguntar comandos ya dados** (`docker compose up`, entrar a `psql`). Los está juntando en `bd.txt`; conviene apuntarlo ahí y, más adelante, al README.
-- **Al explicar mecanismos, atribuye intención al sistema** ("quiere protegerme") en vez de describir el mecanismo ("la base vive en otro proceso"). Empujarlo al mecanismo cada vez.
-- Usó "deprecado" correctamente el 2026-09-01 (era una confusión anterior). Detectó él mismo el aviso de deprecación de `@Check`.
+- **Vuelve a preguntar comandos ya dados** (`docker compose up`, entrar a `psql`). Los junta en `bd.txt`; apuntarlo ahí y, más adelante, al README.
+- **Al explicar mecanismos, atribuye intención al sistema** ("quiere protegerme") en vez de describir el mecanismo. Empujarlo al mecanismo cada vez.
 
 ### Errores conceptuales corregidos (vigilar si reaparecen)
 
 - Creyó que **`not null` garantiza que el stock no sea negativo**. Son tres cosas distintas: existencia del valor (`not null`), tipo (`integer`) y rango (`CHECK`).
 - Creyó que **`validate` valida y después aplica**. No aplica nunca nada.
-- Confusión de capas: preguntó si `create-drop` era "algo de Docker o de Postgres". Es de Hibernate. Ante cualquier comportamiento raro, insistir en la pregunta **"¿quién lo hace?"** antes que "¿dónde pasa?".
+- Confundió `private` con la visibilidad de paquete (`private` es solo la clase; la de paquete es la que no lleva modificador).
+- Llamó "azúcar sintáctico" a `Optional`. No lo es: cambia el tipo y las garantías del compilador, no la sintaxis.
+- Confusión de capas: preguntó si `create-drop` era "algo de Docker o de Postgres". Es de Hibernate. Ante cualquier comportamiento raro, insistir en **"¿quién lo hace?"** antes que "¿dónde pasa?".
 - De sesiones anteriores: dirección vs. puerto, "nombre del puerto", contenedor vs. volumen.
 
-### Hilo conductor de la sesión 2026-09-01 (sirve como material de futuras explicaciones)
+### Hilo conductor pedagógico del proyecto
 
-Cuatro bugs, **todos con el mismo patrón: el sistema arranca, responde, y está mal.**
+Casi todos los bugs encontrados hasta ahora tienen la misma forma: **el sistema arranca, responde, y está mal.** El `ddl-auto` sin definir, el Postgres nativo compitiendo por el 5432, el `CREATE TABLE` que falla como `WARN`, el volumen de Docker montado en el path viejo, el `orElse(null)`, el `delete` que no borraba.
 
-1. `ddl-auto` sin definir → default `none` en bases no embebidas; la app arrancaba sin crear tablas.
-2. **Un PostgreSQL 18 nativo de Windows competía por el puerto 5432** con el contenedor (ver §7).
-3. `invalid value for parameter "TimeZone"` — Windows reporta el alias obsoleto `America/Buenos_Aires`, que Postgres 18 no conoce.
-4. `user` es palabra reservada de SQL → el `CREATE TABLE` de `admin` y `cliente` falló **como `WARN`, sin detener el arranque**; quedaron 5 de 7 tablas.
-
-El método que funcionó y conviene sostener: **predecir antes de mirar**, y **verificar por el camino que falla**, no por otro (el `docker exec ... psql` entraba por `trust` y no probaba nada sobre la contraseña).
+De ahí los dos métodos que conviene sostener: **predecir antes de mirar**, y **verificar por el camino que falla**, no por otro. Corolario: "levanta y responde" nunca es criterio de que algo esté bien.

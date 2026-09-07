@@ -1,5 +1,6 @@
 
-.\mvnw.cmd spring-boot:run
+function run { .\mvnw.cmd spring-boot:run }
+
 function db { docker exec -it tienda-discos-db psql -U tienda -d tienda_discos }
 
 
