@@ -381,6 +381,12 @@ psql -h localhost -U tienda -d tienda_discos                  # conectar desde e
 docker exec -it tienda-discos-db psql -U tienda -d tienda_discos   # conectar desde adentro
 ```
 
+**Probar endpoints desde PowerShell:** `curl` es un **alias de `Invoke-WebRequest`**, no el programa — los flags estilo curl (`-H`, `-d`, `-X`) fallan con un error de enlace de parámetros. Hay que invocar el binario real y frenar el parseo de PowerShell con `--%`:
+
+```powershell
+curl.exe --% -i -X POST http://localhost:8080/api/artistas -H "Content-Type: application/json" -d "{\"nombre\":\"Blur\",\"pais\":\"Reino Unido\"}"
+```
+
 ### ⚠️ Trampa que más tiempo hace perder
 
 Las variables `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` **solo se aplican la primera vez**, cuando la imagen inicializa un volumen vacío. Si después se cambian en el compose y se hace `up`, **no pasa nada**: el volumen ya tiene la base creada con los valores viejos. Para que tome valores nuevos hay que hacer `docker compose down -v` y volver a levantar.
@@ -427,9 +433,11 @@ Todo lo que necesita la otra PC para levantar un entorno idéntico (nombre del c
 
 ### Qué existe
 
-`entity/` (las 7) · `repository/` (las 7, interfaces vacías) · `service/ArtistaService` · `exception/ArtistaNotFoundException` · `docker-compose.yml` · `application.properties`.
+`entity/` (las 7) · `repository/` (las 7, interfaces vacías) · `service/ArtistaService` · `controller/ArtistaController` · `exception/` (`ArtistaNotFoundException` + `GlobalExceptionHandler`) · `docker-compose.yml` · `application.properties`.
 
-No existen todavía: `controller/`, `dto/`, `config/`, ni el manejador global de excepciones.
+**`Artista` está cerrado de punta a punta** y probado con `curl`: `GET` de la colección, `GET` por id, `POST` con `201` y `Location`, `PUT`, `DELETE` con `204`, y el `404` traducido a `ProblemDetail`. Es el corte vertical de referencia: replicar esa forma en las otras seis entidades.
+
+No existen todavía: `dto/` ni `config/`.
 
 ### Decisiones vigentes (no reabrir)
 
@@ -453,11 +461,23 @@ No existen todavía: `controller/`, `dto/`, `config/`, ni el manejador global de
 | `delete` verifica y lanza `404` | Silencio idempotente. Descartado: el catálogo es público (§4), no hay enumeración de recursos que ocultar. La idempotencia del RFC 9110 es sobre el **estado del servidor**, no sobre el código de respuesta |
 | Retornos sin texto de interfaz (`void` en `delete`) | Devolver `"Artista borrado exitosamente"`: el service no sabe que HTTP existe |
 
+**De la capa controller y del manejo de errores:**
+
+| Decisión | Por qué |
+|---|---|
+| URL = recurso, nunca acción: `/api/artistas`, en plural, sin verbos | El verbo lo aporta el método HTTP. `/artistas/get` lo duplica y habilita absurdos como `POST /artistas/get` |
+| `@GetMapping` pelado, nunca `@GetMapping("/")` | Desde Spring Framework 6 el *trailing slash matching* está en `false`: con `"/"` la ruta pasa a ser `/api/artistas/` y `/api/artistas` devuelve `404` |
+| `POST` devuelve `201` + cabecera `Location` | El `200` no dice que se haya creado nada. El `Location` evita que el cliente tenga que hurgar el JSON para saber dónde quedó el recurso |
+| La URI del `Location` sale de `ServletUriComponentsBuilder.fromCurrentRequest()` | Escribirla a mano duplica la ruta que ya está en `@RequestMapping`: si cambia, la cabecera miente sin que nada falle |
+| `DELETE` devuelve `204` sin cuerpo | No hay nada que devolver; el estado lo dice todo |
+| Errores como `ProblemDetail` (RFC 9457), no como `String` | Devolver texto hace que la API conteste JSON cuando todo va bien y `text/plain` cuando falla: el cliente se rompe justo en el caso de error |
+
 ### Pendiente inmediato
 
-1. **`ArtistaController`** + el `@RestControllerAdvice` en `exception/` que traduzca `ArtistaNotFoundException` a `404`.
-2. Después: DTOs y validación (ahí se resuelve lo de no exponer entidades, §6), y springdoc-openapi.
-3. Los otros seis services, una vez que el patrón de `Artista` esté cerrado de punta a punta.
+1. **DTOs y validación**: hoy los controllers exponen la entidad `Artista` directamente, lo que contradice §6. Es el paso siguiente, y probablemente cambie qué recibe `update`.
+2. Después: springdoc-openapi.
+3. Las otras seis entidades, replicando el corte vertical de `Artista` (service → controller → excepción → método en `GlobalExceptionHandler`).
+4. **Pendiente del manejo de errores**: `GlobalExceptionHandler` solo atiende `ArtistaNotFoundException`. Cualquier otra excepción termina en `500` con el stack trace en el cuerpo (lo activa `spring-boot-devtools` con `server.error.include-stacktrace=always`). Al sumar handlers, decidir si va una excepción por entidad o una genérica.
 
 ### Deuda pedagógica (lo que NO está dominado)
 
@@ -465,6 +485,7 @@ No existen todavía: `controller/`, `dto/`, `config/`, ni el manejador global de
 - **`ArtistaService.update()`**: terminó dictado por Claude tras tres intentos. Saldarlo haciendo que escriba el `update` de otra entidad de punta a punta, sin mirar el de `Artista`.
 - **Docker**: solo el vocabulario mínimo (imagen / contenedor / daemon / volumen), el grupo `docker`, `ports`/`volumes`. Nada más.
 - **`BigDecimal` se compara con `compareTo()`, no con `equals()`** — avisar cuando escriba tests (Etapa 3).
+- **`GlobalExceptionHandler`**: se trabó y pidió el código hecho ("no entiendo nada lo que me pedís"). Territorio nuevo — `@RestControllerAdvice` y `@ExceptionHandler` no los había visto nunca. Saldarlo cuando toque el handler de la segunda entidad: que lo escriba él mirando el de `Artista` primero, y el de la tercera sin mirarlo.
 - **`@Version` y optimistic locking (Etapa 2): el terreno ya está preparado.** Razonó solo el escenario de *lost update* con dos hilos y entendió que el `CHECK` no lo detecta (los dos escriben 0, nunca -1). Retomar desde ahí, no desde cero.
 
 ### Cómo trabaja Esteban — patrones observados
@@ -476,6 +497,7 @@ No existen todavía: `controller/`, `dto/`, `config/`, ni el manejador global de
 - **Pide el código hecho antes que intentarlo** (ver regla 1.b). Aceptable para sintaxis; **no** para decisiones de diseño — ahí hay que hacerlo elegir y justificar.
 - **Vuelve a preguntar comandos ya dados** (`docker compose up`, entrar a `psql`). Los junta en `bd.txt`; apuntarlo ahí y, más adelante, al README.
 - **Al explicar mecanismos, atribuye intención al sistema** ("quiere protegerme") en vez de describir el mecanismo. Empujarlo al mecanismo cada vez.
+- **Ante territorio completamente nuevo, la secuencia socrática lo frustra en vez de ayudarlo.** Señal de alarma: cuando empieza a contestar "¿cómo es?" o "¿cómo lo cambio?" en lugar de intentar, conviene pasar a explicación directa, con el código servido y explicado línea por línea. Retomar las preguntas después, sobre lo ya escrito.
 
 ### Errores conceptuales corregidos (vigilar si reaparecen)
 
