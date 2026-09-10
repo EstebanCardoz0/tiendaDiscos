@@ -4,7 +4,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.estebancardozo.tiendadiscos.dto.ArtistaRequest;
-import com.estebancardozo.tiendadiscos.dto.ArtistaResponse;
 import com.estebancardozo.tiendadiscos.entity.Artista;
 import com.estebancardozo.tiendadiscos.service.ArtistaService;
 import com.estebancardozo.tiendadiscos.dto.ArtistaResponse;
@@ -36,7 +35,7 @@ public class ArtistaController {
   @GetMapping
   public List<ArtistaResponse> getAll() {
     return artistaSer.findAll().stream()
-        .map(artista -> new ArtistaResponse(artista.getId(), artista.getNombre(), artista.getPais())).toList();
+        .map(artista -> toResponse(artista)).toList();
 
   }
 
@@ -49,22 +48,18 @@ public class ArtistaController {
 
     Artista artistaCreado = artistaSer.save(artista);
 
-    ArtistaResponse response = new ArtistaResponse(artistaCreado.getId(), artistaCreado.getNombre(),
-        artistaCreado.getPais());
-
     URI uri = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}").buildAndExpand(artistaCreado.getId())
         .toUri();
 
-    return ResponseEntity.created(uri).body(response);
+    return ResponseEntity.created(uri).body(this.toResponse(artistaCreado));
   }
 
   @GetMapping("/{id}")
   public ArtistaResponse getById(@PathVariable Long id) {
 
     Artista artista = artistaSer.findById(id);
-    ArtistaResponse response = new ArtistaResponse(artista.getId(), artista.getNombre(), artista.getPais());
 
-    return response;
+    return this.toResponse(artista);
 
   }
 
@@ -75,12 +70,9 @@ public class ArtistaController {
     artista.setNombre(request.nombre());
     artista.setPais(request.pais());
 
-    Artista artistaCreado = artistaSer.update(id, artista);
+    Artista artistaActualizado = artistaSer.update(id, artista);
 
-    ArtistaResponse response = new ArtistaResponse(artistaCreado.getId(), artistaCreado.getNombre(),
-        artistaCreado.getPais());
-
-    return response;
+    return this.toResponse(artistaActualizado);
   }
 
   @DeleteMapping("/{id}")
@@ -89,4 +81,11 @@ public class ArtistaController {
     return ResponseEntity.noContent().build();
   }
 
+  private ArtistaResponse toResponse(Artista artista) {
+
+    ArtistaResponse response = new ArtistaResponse(artista.getId(), artista.getNombre(), artista.getPais());
+
+    return response;
+
+  }
 }

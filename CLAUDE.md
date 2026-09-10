@@ -433,11 +433,11 @@ Todo lo que necesita la otra PC para levantar un entorno idéntico (nombre del c
 
 ### Qué existe
 
-`entity/` (las 7) · `repository/` (las 7, interfaces vacías) · `service/ArtistaService` · `controller/ArtistaController` · `exception/` (`ArtistaNotFoundException` + `GlobalExceptionHandler`) · `docker-compose.yml` · `application.properties`.
+`entity/` (las 7) · `repository/` (las 7, interfaces vacías) · `service/ArtistaService` · `controller/ArtistaController` · `dto/` (`ArtistaRequest`, `ArtistaResponse`) · `exception/` (`ArtistaNotFoundException` + `GlobalExceptionHandler`) · `docker-compose.yml` · `application.properties`.
 
-**`Artista` está cerrado de punta a punta** y probado con `curl`: `GET` de la colección, `GET` por id, `POST` con `201` y `Location`, `PUT`, `DELETE` con `204`, y el `404` traducido a `ProblemDetail`. Es el corte vertical de referencia: replicar esa forma en las otras seis entidades.
+**`Artista` está cerrado de punta a punta** y probado con `curl`: `GET` de la colección, `GET` por id, `POST` con `201` y `Location`, `PUT`, `DELETE` con `204`, el `404` traducido a `ProblemDetail`, DTOs de entrada y salida en los cinco endpoints, y validación con `400` + detalle por campo. Es el corte vertical de referencia: replicar esa forma en las otras seis entidades.
 
-No existen todavía: `dto/` ni `config/`.
+No existe todavía: `config/`.
 
 ### Decisiones vigentes (no reabrir)
 
@@ -472,12 +472,25 @@ No existen todavía: `dto/` ni `config/`.
 | `DELETE` devuelve `204` sin cuerpo | No hay nada que devolver; el estado lo dice todo |
 | Errores como `ProblemDetail` (RFC 9457), no como `String` | Devolver texto hace que la API conteste JSON cuando todo va bien y `text/plain` cuando falla: el cliente se rompe justo en el caso de error |
 
+**De la capa DTO y la validación** (decididas sobre `Artista`, son la plantilla para las otras seis):
+
+| Decisión | Alternativa descartada y por qué |
+|---|---|
+| **Dos DTOs** por entidad: `ArtistaRequest` (entra: `nombre`, `pais`) y `ArtistaResponse` (sale: `id`, `nombre`, `pais`) | Uno solo: el `id` es **obligatorio** en la salida (sin él el cliente no puede armar ninguna URL) e **imposible** en la entrada (el cliente no puede saber un id que Postgres no generó todavía). Un campo así no cabe en una clase sin mentir en uno de los dos contratos |
+| DTOs como `record`, sin Lombok | Clase con `@Getter`/`@Setter`: los records ya dan campos `final`, constructor canónico, accessors y `equals`/`hashCode`. Las entidades sí siguen con Lombok porque JPA exige constructor vacío y campos mutables |
+| Lista blanca: el `id` **no existe** como componente de `ArtistaRequest` | `artista.setId(null)` en el controller o `@JsonIgnore` en la entidad: tapan el agujero del `id` enumerando prohibiciones, y meten anotaciones de la capa web dentro de la entidad. Sin componente, Jackson no tiene dónde poner el valor — cerrado por construcción |
+| `@NotBlank` sobre `nombre` (no `@NotNull` ni `@NotEmpty`) | Las otras dos aceptan `"   "`, que no sirve como nombre de artista |
+| El `PUT` reusa `ArtistaRequest` | Un DTO propio: al ser reemplazo total, el `PUT` pide los mismos campos con las mismas reglas que el `POST`. **Si alguna vez se agrega un `PATCH`, ese sí necesita el suyo**: ahí `@NotBlank` sería incorrecto, porque "campo ausente" significaría "dejalo como está" |
+| El mapeo vive en el **controller** (`private ArtistaResponse toResponse(Artista)`) | (a) Que el service reciba/devuelva DTOs: lo ataría a HTTP y ningún job ni test podría usarlo sin fabricar objetos de la capa web. (b) Un `ArtistaResponse.from(artista)` estático: obligaría al DTO a importar la entidad. (c) `ArtistaMapper`/MapStruct: resuelve el problema de otra escala — se sube a eso cuando aparezca un segundo consumidor del mapeo, no antes |
+| Errores de validación → `ProblemDetail` con propiedad extra `errores` (mapa campo → mensaje) | Devolver solo el primer error: el validador ya los detectó todos, y un formulario con tres campos malos obligaría a tres viajes al servidor |
+| Usar siempre el **retorno** de `save()`, nunca el objeto que se le pasó | La javadoc lo pide explícitamente. Hoy "funciona" leer el argumento porque `persist()` muta la instancia, pero `merge()` devuelve **otra** y la original queda detached |
+
 ### Pendiente inmediato
 
-1. **DTOs y validación**: hoy los controllers exponen la entidad `Artista` directamente, lo que contradice §6. Es el paso siguiente, y probablemente cambie qué recibe `update`.
-2. Después: springdoc-openapi.
-3. Las otras seis entidades, replicando el corte vertical de `Artista` (service → controller → excepción → método en `GlobalExceptionHandler`).
-4. **Pendiente del manejo de errores**: `GlobalExceptionHandler` solo atiende `ArtistaNotFoundException`. Cualquier otra excepción termina en `500` con el stack trace en el cuerpo (lo activa `spring-boot-devtools` con `server.error.include-stacktrace=always`). Al sumar handlers, decidir si va una excepción por entidad o una genérica.
+1. **springdoc-openapi**.
+2. Las otras seis entidades, replicando el corte vertical de `Artista` (service → controller → DTOs → excepción → método en `GlobalExceptionHandler`).
+3. **Pendiente del manejo de errores**: `GlobalExceptionHandler` atiende `ArtistaNotFoundException` y `MethodArgumentNotValidException`. Cualquier **otra** excepción sigue terminando en `500` con el stack trace en el cuerpo (lo activa `spring-boot-devtools` con `server.error.include-stacktrace=always`). Al sumar handlers, decidir si va una excepción por entidad o una genérica.
+4. **Sin restricción de unicidad en ningún lado.** Hoy se pueden crear cincuenta artistas llamados "Blur". Si se decide que `nombre` sea único, va en la columna (`@Column(unique = true)`), no en un `if` del service: entre el `SELECT` y el `INSERT` hay una ventana de carrera — el mismo problema que la Etapa 2 ataca con el stock.
 
 ### Deuda pedagógica (lo que NO está dominado)
 
@@ -487,6 +500,9 @@ No existen todavía: `dto/` ni `config/`.
 - **`BigDecimal` se compara con `compareTo()`, no con `equals()`** — avisar cuando escriba tests (Etapa 3).
 - **`GlobalExceptionHandler`**: se trabó y pidió el código hecho ("no entiendo nada lo que me pedís"). Territorio nuevo — `@RestControllerAdvice` y `@ExceptionHandler` no los había visto nunca. Saldarlo cuando toque el handler de la segunda entidad: que lo escriba él mirando el de `Artista` primero, y el de la tercera sin mirarlo.
 - **`@Version` y optimistic locking (Etapa 2): el terreno ya está preparado.** Razonó solo el escenario de *lost update* con dos hilos y entendió que el `CHECK` no lo detecta (los dos escriben 0, nunca -1). Retomar desde ahí, no desde cero.
+- **DTOs y validación**: las **decisiones** las tomó y justificó bien solo (dos DTOs, `@NotBlank`, reusar el `Request` en el `PUT`, mapeo en el controller). El **código** necesitó andamiaje en casi todos los pasos: pidió el código hecho para `@Valid`, para el `ArtistaResponse` en `create` y para el handler de validación. Saldarlo con la segunda entidad: que escriba su par de DTOs y cablee los cinco endpoints sin mirar `ArtistaController`.
+- **Streams**: primera vez que aparecen (`.stream().map().toList()`). Vio la analogía con `map` de JS y la evaluación perezosa, pero escribió una sola línea con ayuda. No dominado. Aún no vio `Collectors`, ni las *method references* (`this::toResponse`), que es la forma idiomática de la lambda que quedó en `getAll`.
+- **Records**: primera vez. Entendió qué genera el compilador y por qué van sin Lombok, pero no escribió ninguno sin modelo a la vista salvo `ArtistaResponse`.
 
 ### Cómo trabaja Esteban — patrones observados
 
@@ -494,6 +510,9 @@ No existen todavía: `dto/` ni `config/`.
 - **Ante la repregunta, responde con la conclusión y pide confianza** ("está todo eso, confía en mí") en vez de contestar el contenido. Conviene **reformular la pregunta como parte del trabajo siguiente**, donde la respuesta se usa para algo, en lugar de insistir de frente.
 - **⚠️ Razona la opción correcta en la conversación y escribe la otra en el código.** Elige lanzar una excepción y escribe `orElse(null)`; concluye `RuntimeException` y escribe `extends Exception`. No es falta de comprensión: el hábito viejo gana cuando la atención está en la sintaxis. Contramedida acordada: que relea el método completo contra la decisión antes de pasarlo.
 - **Corrige la línea señalada y se lleva puesta la anterior.** Pedirle que relea el método entero, no la línea.
+- **⚠️ Aplica un cambio en todos los lugares menos uno.** El patrón más frecuente y el más costoso: de "son tres cambios" hace dos; de "reemplazá las cuatro ocurrencias" reemplaza tres; el que falta suele ser la **firma del método**, porque la atención está en el cuerpo. Aparece incluso cuando se le advierte en el mismo mensaje. **Contramedida acordada (mecánica, no de atención): al terminar, buscar en el archivo la cadena que debía desaparecer (`Ctrl+F`). Si aparece, no terminó.** Al pedirle una tarea de este tipo, decirle de antemano **cuántos** cambios son.
+- **Da por verificado lo que no se ejecutó.** Probó una refactorización con la tabla vacía: `[]` y `404`, dos respuestas correctas y cero llamadas al método que acababa de extraer. Antes de aceptar una prueba como válida, preguntarle **cuántas veces corrió la línea que cambió**.
+- **Deja código viejo comentado** en vez de borrarlo, e **importa dos veces la misma clase** (el IDE lo agrega y él además lo escribe). Señalarlo cada vez: para lo primero está Git; para lo segundo, mirar la lista de imports antes de aceptar la sugerencia del IDE.
 - **Pide el código hecho antes que intentarlo** (ver regla 1.b). Aceptable para sintaxis; **no** para decisiones de diseño — ahí hay que hacerlo elegir y justificar.
 - **Vuelve a preguntar comandos ya dados** (`docker compose up`, entrar a `psql`). Los junta en `bd.txt`; apuntarlo ahí y, más adelante, al README.
 - **Al explicar mecanismos, atribuye intención al sistema** ("quiere protegerme") en vez de describir el mecanismo. Empujarlo al mecanismo cada vez.
