@@ -230,6 +230,18 @@ Se deja para el final para que la seguridad no tape errores del núcleo durante 
 - Endpoints de catálogo públicos; compra autenticada; gestión de catálogo/stock solo ADMIN
 - Panel de administración
 
+### Etapa 7 — Pagos con Mercado Pago (agregada el 2026-09-11)
+
+Va **después del CI**, deliberadamente. Es un *plus* sobre un proyecto terminado: no cubre ningún hueco del CV (§1) y compite por tiempo con las etapas que sí los cubren. Un checkout funcionando sin un solo test dice lo contrario de lo que el proyecto quiere decir.
+
+- Crear la preferencia de pago (llamada HTTP saliente hacia la API de MP)
+- Endpoint de webhook: MP hace un `POST` a una URL propia cuando cambia el estado del pago
+- **Idempotencia del webhook**: MP reintenta si no recibe `200` a tiempo; el mismo aviso puede llegar varias veces y el stock no puede descontarse más de una vez
+- Verificar que el aviso viene de MP (el endpoint es público por necesidad)
+- Sandbox con usuarios y tarjetas de prueba. En desarrollo el webhook no llega a `localhost`: hace falta un túnel (ngrok), cuya URL cambia en cada reinicio
+
+**Lo que se adelanta a la Etapa 1** (barato hoy, carísimo después): ver la decisión del flujo de compra en §8.
+
 ---
 
 ## 6. CONVENCIONES
@@ -447,6 +459,19 @@ No existe todavía: `config/`.
 - **Zona horaria UTC** en la JVM (`-Duser.timezone=UTC` en el `spring-boot-maven-plugin`). Se guardan instantes absolutos; la conversión a hora local es problema del cliente.
 - **Idioma de identificadores** → ver §6.
 
+**Del flujo de compra** (decidido el 2026-09-11, diseñado enteramente por Esteban vía preguntas; ver Etapa 7 en §5):
+
+El pago con Mercado Pago es **asincrónico**: entre que el cliente arranca el checkout y se sabe si pagó pasan minutos, o no se sabe nunca. `Compra` se escribe **ya con esta forma**, aunque la integración llegue en la Etapa 7 — meter estados a un flujo de compra ya escrito y testeado es reescribirlo.
+
+| Decisión | Alternativa descartada y por qué |
+|---|---|
+| **Reserva de stock**: columna `reservado` (entero) en `edicion`. Disponible = `stock - reservado` | Un booleano `no_disponible`: es **derivado** de esos dos números, y guardar lo derivado permite que la base acepte filas contradictorias que ningún `if` impide. Se guarda lo que no se puede recalcular (como `Item.precio_unitario`), no lo que sí |
+| El `stock` se descuenta **solo al acreditarse el pago**; antes solo sube `reservado` | Descontar al crear la compra: el que abandona el checkout se lleva stock real |
+| **`enum` de estado** en `Compra`, con `@Enumerated(EnumType.STRING)`: `RESERVADA`, `EN_VERIFICACION`, `CONFIRMADA`, `RECHAZADA`, `EXPIRADA` | (a) `boolean pagada`: tres situaciones distintas comprimidas en el mismo `false`. Cuando un booleano necesita un tercer valor, no va un segundo booleano. (b) `ORDINAL`: guarda la posición, reordenar el enum corrompe los datos viejos en silencio |
+| Criterio para admitir un estado: **hay un evento observable que lleva a él y un comportamiento distinto en él** | Se cayó `PAGADA` ("el cliente envió el pago"): ningún canal informa eso. La app solo observa tres cosas — un request de su cliente, un webhook de MP, y su reloj |
+| La reserva vencida la libera una **tarea programada** (`@Scheduled` + `@EnableScheduling`) que pasa a `EXPIRADA` | Esperar un request que no va a llegar (el cliente cerró la pestaña). Un timeout no se espera: se verifica. Un hilo que pregunta cada minuto, no mil hilos dormidos |
+| **`@Version` en `Edicion`**, igual que antes | El conflicto se adelantó de `stock` a `reservado`, pero `@Version` protege **la fila**, no la columna. Y mejora el escenario de la Etapa 2: dos personas apretando "comprar" a la vez es más frecuente que dos webhooks simultáneos |
+
 **De la capa service** (decididas sobre `ArtistaService`, son la plantilla para los otros seis):
 
 | Decisión | Alternativa descartada y por qué |
@@ -488,7 +513,7 @@ No existe todavía: `config/`.
 ### Pendiente inmediato
 
 1. **springdoc-openapi**.
-2. Las otras seis entidades, replicando el corte vertical de `Artista` (service → controller → DTOs → excepción → método en `GlobalExceptionHandler`).
+2. Las otras seis entidades, replicando el corte vertical de `Artista` (service → controller → DTOs → excepción → método en `GlobalExceptionHandler`). **`Compra` y `Edicion` arrastran la decisión del flujo de compra** (enum de estado, `reservado`, `@Version`): no escribirlas sin leerla.
 3. **Pendiente del manejo de errores**: `GlobalExceptionHandler` atiende `ArtistaNotFoundException` y `MethodArgumentNotValidException`. Cualquier **otra** excepción sigue terminando en `500` con el stack trace en el cuerpo (lo activa `spring-boot-devtools` con `server.error.include-stacktrace=always`). Al sumar handlers, decidir si va una excepción por entidad o una genérica.
 4. **Sin restricción de unicidad en ningún lado.** Hoy se pueden crear cincuenta artistas llamados "Blur". Si se decide que `nombre` sea único, va en la columna (`@Column(unique = true)`), no en un `if` del service: entre el `SELECT` y el `INSERT` hay una ventana de carrera — el mismo problema que la Etapa 2 ataca con el stock.
 
