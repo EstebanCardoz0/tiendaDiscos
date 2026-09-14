@@ -449,6 +449,8 @@ Todo lo que necesita la otra PC para levantar un entorno idéntico (nombre del c
 
 **`Artista` está cerrado de punta a punta** y probado con `curl`: `GET` de la colección, `GET` por id, `POST` con `201` y `Location`, `PUT`, `DELETE` con `204`, el `404` traducido a `ProblemDetail`, DTOs de entrada y salida en los cinco endpoints, y validación con `400` + detalle por campo. Es el corte vertical de referencia: replicar esa forma en las otras seis entidades.
 
+**springdoc-openapi** (`3.1.1`, la línea que soporta Boot 4 — la `2.x` es de Boot 3) sirve Swagger UI en `/swagger-ui.html` y el documento en `/v3/api-docs`. Los cinco endpoints de `Artista` están anotados; el título de la API sale de un `@OpenAPIDefinition` en `TiendaDiscosApplication`.
+
 No existe todavía: `config/`.
 
 ### Decisiones vigentes (no reabrir)
@@ -510,12 +512,24 @@ El pago con Mercado Pago es **asincrónico**: entre que el cliente arranca el ch
 | Errores de validación → `ProblemDetail` con propiedad extra `errores` (mapa campo → mensaje) | Devolver solo el primer error: el validador ya los detectó todos, y un formulario con tres campos malos obligaría a tres viajes al servidor |
 | Usar siempre el **retorno** de `save()`, nunca el objeto que se le pasó | La javadoc lo pide explícitamente. Hoy "funciona" leer el argumento porque `persist()` muta la instancia, pero `merge()` devuelve **otra** y la original queda detached |
 
+**De la documentación de la API** (decididas sobre `Artista`, son la plantilla para las otras seis):
+
+Springdoc genera el documento por **análisis estático**: lee tipos y anotaciones, nunca ejecuta el método. Todo lo que este proyecto desacopló a propósito le queda invisible — el status vive dentro del `ResponseEntity`, el `404` vive en el `GlobalExceptionHandler`, la propiedad `errores` se agrega con `setProperty` en runtime, y el aplanado del JSON lo decide `ProblemDetailJacksonMixin`, no la clase `ProblemDetail`. Por eso lo inferido hay que corregirlo **a mano**, y esa corrección es duplicación que puede desincronizarse sin que nada falle.
+
+| Decisión | Alternativa descartada y por qué |
+|---|---|
+| Criterio de qué anotar: **solo lo que cambia el código que el cliente tiene que escribir** (el `201` + `Location`, el `204`, los `404`, los `400` de validación) | (a) No anotar nada: la doc anuncia `200` donde el código devuelve `201`/`204`, y omite todos los errores. (b) Anotar todo: veinte anotaciones que repiten obviedades son pasivo puro — nadie las revisa cuando cambia el código. `GET /api/artistas` no lleva ninguna, porque lo inferido ya es correcto |
+| Declarar `content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))` en cada `4xx` | Declarar el código sin `content`: springdoc rellena con el tipo de retorno del método y documenta un `ArtistaResponse` como cuerpo del error. **Anotar a medias empeora la mentira**: antes omitía el `404`, después lo afirmaba con un cuerpo falso |
+| El `400` queda con el schema genérico de `ProblemDetail`, sin mostrar `errores` | Un DTO propio de error solo para la documentación: crea una segunda fuente de verdad que hay que sincronizar a mano con el handler, para ganar precisión únicamente en un *ejemplo*. El contrato (`problem+json`) ya es correcto |
+| Metadata (título, versión) con `@OpenAPIDefinition` sobre `TiendaDiscosApplication` | Un `@Bean OpenAPI` en `config/`: una clase entera para tres strings. No hay propiedad de `application.properties` que lo haga |
+
+⚠️ Dos `@ApiResponse` con el mismo `responseCode` **no dan error de compilación**: el documento OpenAPI es un mapa por código, así que el segundo pisa al primero en silencio. Ya pasó una vez.
+
 ### Pendiente inmediato
 
-1. **springdoc-openapi**.
-2. Las otras seis entidades, replicando el corte vertical de `Artista` (service → controller → DTOs → excepción → método en `GlobalExceptionHandler`). **`Compra` y `Edicion` arrastran la decisión del flujo de compra** (enum de estado, `reservado`, `@Version`): no escribirlas sin leerla.
-3. **Pendiente del manejo de errores**: `GlobalExceptionHandler` atiende `ArtistaNotFoundException` y `MethodArgumentNotValidException`. Cualquier **otra** excepción sigue terminando en `500` con el stack trace en el cuerpo (lo activa `spring-boot-devtools` con `server.error.include-stacktrace=always`). Al sumar handlers, decidir si va una excepción por entidad o una genérica.
-4. **Sin restricción de unicidad en ningún lado.** Hoy se pueden crear cincuenta artistas llamados "Blur". Si se decide que `nombre` sea único, va en la columna (`@Column(unique = true)`), no en un `if` del service: entre el `SELECT` y el `INSERT` hay una ventana de carrera — el mismo problema que la Etapa 2 ataca con el stock.
+1. Las otras seis entidades, replicando el corte vertical de `Artista` (service → controller → DTOs → excepción → método en `GlobalExceptionHandler` → anotaciones de springdoc). **`Compra` y `Edicion` arrastran la decisión del flujo de compra** (enum de estado, `reservado`, `@Version`): no escribirlas sin leerla.
+2. **Pendiente del manejo de errores**: `GlobalExceptionHandler` atiende `ArtistaNotFoundException` y `MethodArgumentNotValidException`. Cualquier **otra** excepción sigue terminando en `500` con el stack trace en el cuerpo (lo activa `spring-boot-devtools` con `server.error.include-stacktrace=always`). Al sumar handlers, decidir si va una excepción por entidad o una genérica.
+3. **Sin restricción de unicidad en ningún lado.** Hoy se pueden crear cincuenta artistas llamados "Blur". Si se decide que `nombre` sea único, va en la columna (`@Column(unique = true)`), no en un `if` del service: entre el `SELECT` y el `INSERT` hay una ventana de carrera — el mismo problema que la Etapa 2 ataca con el stock.
 
 ### Deuda pedagógica (lo que NO está dominado)
 
@@ -526,6 +540,7 @@ El pago con Mercado Pago es **asincrónico**: entre que el cliente arranca el ch
 - **`GlobalExceptionHandler`**: se trabó y pidió el código hecho ("no entiendo nada lo que me pedís"). Territorio nuevo — `@RestControllerAdvice` y `@ExceptionHandler` no los había visto nunca. Saldarlo cuando toque el handler de la segunda entidad: que lo escriba él mirando el de `Artista` primero, y el de la tercera sin mirarlo.
 - **`@Version` y optimistic locking (Etapa 2): el terreno ya está preparado.** Razonó solo el escenario de *lost update* con dos hilos y entendió que el `CHECK` no lo detecta (los dos escriben 0, nunca -1). Retomar desde ahí, no desde cero.
 - **DTOs y validación**: las **decisiones** las tomó y justificó bien solo (dos DTOs, `@NotBlank`, reusar el `Request` en el `PUT`, mapeo en el controller). El **código** necesitó andamiaje en casi todos los pasos: pidió el código hecho para `@Valid`, para el `ArtistaResponse` en `create` y para el handler de validación. Saldarlo con la segunda entidad: que escriba su par de DTOs y cablee los cinco endpoints sin mirar `ArtistaController`.
+- **Anotaciones de springdoc**: mismo perfil que con los DTOs. Las **decisiones** las tomó y justificó bien (qué anotar y qué no, dejar el `400` con el schema genérico). El **código** se trabó dos veces y hubo que servirlo hecho: la sintaxis de `headers = @Header(...)`, y dónde ubicar un `@ApiResponse` nuevo dentro de un `@ApiResponses` que ya existía. Saldarlo con la segunda entidad: que anote sus cinco endpoints sin mirar `ArtistaController`.
 - **Streams**: primera vez que aparecen (`.stream().map().toList()`). Vio la analogía con `map` de JS y la evaluación perezosa, pero escribió una sola línea con ayuda. No dominado. Aún no vio `Collectors`, ni las *method references* (`this::toResponse`), que es la forma idiomática de la lambda que quedó en `getAll`.
 - **Records**: primera vez. Entendió qué genera el compilador y por qué van sin Lombok, pero no escribió ninguno sin modelo a la vista salvo `ArtistaResponse`.
 
@@ -541,12 +556,15 @@ El pago con Mercado Pago es **asincrónico**: entre que el cliente arranca el ch
 - **Pide el código hecho antes que intentarlo** (ver regla 1.b). Aceptable para sintaxis; **no** para decisiones de diseño — ahí hay que hacerlo elegir y justificar.
 - **Vuelve a preguntar comandos ya dados** (`docker compose up`, entrar a `psql`). Los junta en `bd.txt`; apuntarlo ahí y, más adelante, al README.
 - **Al explicar mecanismos, atribuye intención al sistema** ("quiere protegerme") en vez de describir el mecanismo. Empujarlo al mecanismo cada vez.
+- **Se satura con sesiones largas sobre un mismo tema** ("ya me abruma todo esto", dicho después de una hora seguida de springdoc). No es falta de interés: llega igual al final, pero las últimas decisiones las toma por cansancio. Ofrecer el corte antes de que lo pida, y cerrar con algo mecánico y sin trampas en vez de con una decisión de diseño.
 - **Ante territorio completamente nuevo, la secuencia socrática lo frustra en vez de ayudarlo.** Señal de alarma: cuando empieza a contestar "¿cómo es?" o "¿cómo lo cambio?" en lugar de intentar, conviene pasar a explicación directa, con el código servido y explicado línea por línea. Retomar las preguntas después, sobre lo ya escrito.
 
 ### Errores conceptuales corregidos (vigilar si reaparecen)
 
 - Creyó que **`not null` garantiza que el stock no sea negativo**. Son tres cosas distintas: existencia del valor (`not null`), tipo (`integer`) y rango (`CHECK`).
 - Creyó que **`validate` valida y después aplica**. No aplica nunca nada.
+- Creyó que si a una dependencia le falta `<version>`, **Maven usa la más nueva**. No: el pom es inválido y el build falla antes de leer una línea de Java (`'dependencies.dependency.version' ... is missing`). Un build tiene que ser reproducible; elegir "la última" haría que el mismo commit compile distinto cada día.
+- Creyó que el `<parent>` **solo fija la versión de Spring**. Trae un `dependencyManagement` con cientos de pares artefacto → versión, terceros incluidos (Postgres, Lombok, Testcontainers, Jackson). Contraejemplo que lo zanja: esas tres no llevan `<version>` en el pom y no son de Spring. No agrega dependencias: solo fija la versión de las que uno declara — y lo que no está en la lista (springdoc) hay que versionarlo a mano.
 - Confundió `private` con la visibilidad de paquete (`private` es solo la clase; la de paquete es la que no lleva modificador).
 - Llamó "azúcar sintáctico" a `Optional`. No lo es: cambia el tipo y las garantías del compilador, no la sintaxis.
 - Confusión de capas: preguntó si `create-drop` era "algo de Docker o de Postgres". Es de Hibernate. Ante cualquier comportamiento raro, insistir en **"¿quién lo hace?"** antes que "¿dónde pasa?".
@@ -554,6 +572,6 @@ El pago con Mercado Pago es **asincrónico**: entre que el cliente arranca el ch
 
 ### Hilo conductor pedagógico del proyecto
 
-Casi todos los bugs encontrados hasta ahora tienen la misma forma: **el sistema arranca, responde, y está mal.** El `ddl-auto` sin definir, el Postgres nativo compitiendo por el 5432, el `CREATE TABLE` que falla como `WARN`, el volumen de Docker montado en el path viejo, el `orElse(null)`, el `delete` que no borraba.
+Casi todos los bugs encontrados hasta ahora tienen la misma forma: **el sistema arranca, responde, y está mal.** El `ddl-auto` sin definir, el Postgres nativo compitiendo por el 5432, el `CREATE TABLE` que falla como `WARN`, el volumen de Docker montado en el path viejo, el `orElse(null)`, el `delete` que no borraba, y toda la tanda de springdoc (la doc anunciando `200` donde el código devuelve `201`, el `404` documentado con un cuerpo que la API nunca manda, el `@ApiResponse` duplicado que pisa al anterior en silencio).
 
 De ahí los dos métodos que conviene sostener: **predecir antes de mirar**, y **verificar por el camino que falla**, no por otro. Corolario: "levanta y responde" nunca es criterio de que algo esté bien.
