@@ -21,6 +21,12 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import jakarta.validation.Valid;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import org.springframework.http.ProblemDetail;
+import io.swagger.v3.oas.annotations.headers.Header;
 
 @RestController
 @RequestMapping("/api/artistas")
@@ -39,6 +45,12 @@ public class ArtistaController {
 
   }
 
+  @ApiResponses({
+      @ApiResponse(responseCode = "201", description = "Artista creado", headers = @Header(name = "Location", description = "URI del artista recien creado", schema = @Schema(type = "string"))),
+      @ApiResponse(responseCode = "400", description = "Datos invalidos", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
+
+  })
+
   @PostMapping
   public ResponseEntity<ArtistaResponse> create(@Valid @RequestBody ArtistaRequest request) {
 
@@ -54,6 +66,9 @@ public class ArtistaController {
     return ResponseEntity.created(uri).body(this.toResponse(artistaCreado));
   }
 
+  @ApiResponses({ @ApiResponse(responseCode = "200", description = "Artista encontrado"),
+      @ApiResponse(responseCode = "404", description = "No existe un artista con ese id", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
+  })
   @GetMapping("/{id}")
   public ArtistaResponse getById(@PathVariable Long id) {
 
@@ -63,7 +78,13 @@ public class ArtistaController {
 
   }
 
+  @ApiResponses({
+      @ApiResponse(responseCode = "200", description = "Artista actualizado"),
+      @ApiResponse(responseCode = "400", description = "Datos invalidos", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))),
+      @ApiResponse(responseCode = "404", description = "No existe un artista con ese id", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
+  })
   @PutMapping("/{id}")
+
   public ArtistaResponse update(@PathVariable Long id, @Valid @RequestBody ArtistaRequest request) {
 
     Artista artista = new Artista();
@@ -75,6 +96,8 @@ public class ArtistaController {
     return this.toResponse(artistaActualizado);
   }
 
+  @ApiResponses({ @ApiResponse(responseCode = "204", description = "Artista eliminado"),
+      @ApiResponse(responseCode = "404", description = "Artista no encontrado", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))) })
   @DeleteMapping("/{id}")
   public ResponseEntity<Void> delete(@PathVariable Long id) {
     artistaSer.delete(id);
