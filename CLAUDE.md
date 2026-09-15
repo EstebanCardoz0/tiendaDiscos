@@ -445,7 +445,9 @@ Todo lo que necesita la otra PC para levantar un entorno idéntico (nombre del c
 
 ### Qué existe
 
-`entity/` (las 7) · `repository/` (las 7, interfaces vacías) · `service/ArtistaService` · `controller/ArtistaController` · `dto/` (`ArtistaRequest`, `ArtistaResponse`) · `exception/` (`ArtistaNotFoundException` + `GlobalExceptionHandler`) · `docker-compose.yml` · `application.properties`.
+`entity/` (las 7) · `repository/` (las 7, interfaces vacías) · `service/ArtistaService` · `controller/ArtistaController` · `dto/` (`ArtistaRequest`, `ArtistaResponse`, `AlbumRequest`, `AlbumResponse`) · `exception/` (`ArtistaNotFoundException` + `GlobalExceptionHandler`) · `docker-compose.yml` · `application.properties`.
+
+De `Album` existe **solo el par de DTOs**. Falta todo el resto de su corte vertical: `ReferenciaInvalidaException`, su handler, `AlbumService`, `AlbumController` y las anotaciones de springdoc.
 
 **`Artista` está cerrado de punta a punta** y probado con `curl`: `GET` de la colección, `GET` por id, `POST` con `201` y `Location`, `PUT`, `DELETE` con `204`, el `404` traducido a `ProblemDetail`, DTOs de entrada y salida en los cinco endpoints, y validación con `400` + detalle por campo. Es el corte vertical de referencia: replicar esa forma en las otras seis entidades.
 
@@ -498,6 +500,7 @@ El pago con Mercado Pago es **asincrónico**: entre que el cliente arranca el ch
 | La URI del `Location` sale de `ServletUriComponentsBuilder.fromCurrentRequest()` | Escribirla a mano duplica la ruta que ya está en `@RequestMapping`: si cambia, la cabecera miente sin que nada falle |
 | `DELETE` devuelve `204` sin cuerpo | No hay nada que devolver; el estado lo dice todo |
 | Errores como `ProblemDetail` (RFC 9457), no como `String` | Devolver texto hace que la API conteste JSON cuando todo va bien y `text/plain` cuando falla: el cliente se rompe justo en el caso de error |
+| **`404` solo cuando el id ausente está en la URL; `422` cuando está en el cuerpo** (decidido el 2026-09-15 sobre `POST /api/albumes` con un `artistaId` inexistente) | (a) `404` para los dos: con `POST /api/albumes` el *target resource* del RFC 9110 **existe** — el cliente no puede distinguir "te equivocaste de endpoint" de "el id del body no apunta a nada". (b) `400`: ya está ocupado por `MethodArgumentNotValidException`, y con su propia forma (la propiedad `errores`); reusarlo obliga al cliente a mirar el cuerpo para saber cuál de los dos le tocó. El criterio que los separa: el `400` se detecta leyendo el request, el `422` requiere ir a la base |
 
 **De la capa DTO y la validación** (decididas sobre `Artista`, son la plantilla para las otras seis):
 
@@ -511,6 +514,18 @@ El pago con Mercado Pago es **asincrónico**: entre que el cliente arranca el ch
 | El mapeo vive en el **controller** (`private ArtistaResponse toResponse(Artista)`) | (a) Que el service reciba/devuelva DTOs: lo ataría a HTTP y ningún job ni test podría usarlo sin fabricar objetos de la capa web. (b) Un `ArtistaResponse.from(artista)` estático: obligaría al DTO a importar la entidad. (c) `ArtistaMapper`/MapStruct: resuelve el problema de otra escala — se sube a eso cuando aparezca un segundo consumidor del mapeo, no antes |
 | Errores de validación → `ProblemDetail` con propiedad extra `errores` (mapa campo → mensaje) | Devolver solo el primer error: el validador ya los detectó todos, y un formulario con tres campos malos obligaría a tres viajes al servidor |
 | Usar siempre el **retorno** de `save()`, nunca el objeto que se le pasó | La javadoc lo pide explícitamente. Hoy "funciona" leer el argumento porque `persist()` muta la instancia, pero `merge()` devuelve **otra** y la original queda detached |
+
+**De los DTOs con relaciones** (decididas sobre `Album`, el 2026-09-15; son la plantilla para `Edicion`, `Compra` e `Item`):
+
+`Request` y `Response` **no son simétricos**, y las FKs son donde eso se ve. Identificar y mostrar son trabajos distintos.
+
+| Decisión | Alternativa descartada y por qué |
+|---|---|
+| **Entra el id plano**: `AlbumRequest` lleva `Long artistaId` | El nombre del artista: no identifica (nada impide dos filas "Blur" — ver pendiente 3) y además es mutable, así que una referencia por nombre queda apuntando a nada tras un rename. El id no cambia nunca, y el cliente ya lo tiene: se lo dio el `ArtistaResponse` de cualquier `GET` anterior |
+| **Sale el DTO anidado**: `AlbumResponse` lleva `ArtistaResponse artista` | (a) Solo `artistaId`: un cliente que lista 20 álbumes necesita 20 requests más para poder escribir "Blur" en pantalla. (b) Solo `String artista` (el nombre): puede mostrarlo pero no linkear a `/api/artistas/7`, ni filtrar, ni navegar — el mismo argumento que puso el `id` en `ArtistaResponse`. (c) Campos planos (`artistaId` + `artistaNombre`): **no escala** — en `EdicionResponse` obliga a `albumId`, `albumTitulo` y `albumArtistaNombre`, con dos niveles de prefijo. Anidado, `EdicionResponse` lleva un `AlbumResponse` y listo |
+| Anidar `ArtistaResponse` **no es un problema de seguridad** | Es un DTO, no la entidad, y sus tres campos son públicos por §4 (el catálogo se lee sin autenticar). El riesgo real de anidar es **acoplamiento** (un campo nuevo en `ArtistaResponse` aparece solo en todos los `AlbumResponse`), que es otra cosa. Donde el reflejo de "no exponer" sí va a valer es en `ClienteResponse`, por `clave` |
+| El tipo del componente lo manda el dominio, no la anotación disponible | Pasó al revés: `anio` se declaró `String` para poder usarle `@NotBlank`. Un `String` acepta `"mil novecientos noventa y cuatro"`, pasa la validación, y explota al convertirlo en el service. Cuando una anotación "no compila" sobre un tipo, la anotación es la equivocada |
+| `@NotNull` para todo lo que no es texto (`Integer anio`, `Long artistaId`); `@NotBlank` solo sobre `String` | `@NotBlank` sobre un `Integer` **compila** (verificado): el compilador solo mira que la anotación esté en un lugar permitido. El tipo lo valida Hibernate Validator en runtime → `UnexpectedTypeException: HV000030` → `500` en el primer `POST` |
 
 **De la documentación de la API** (decididas sobre `Artista`, son la plantilla para las otras seis):
 
@@ -528,8 +543,9 @@ Springdoc genera el documento por **análisis estático**: lee tipos y anotacion
 ### Pendiente inmediato
 
 1. Las otras seis entidades, replicando el corte vertical de `Artista` (service → controller → DTOs → excepción → método en `GlobalExceptionHandler` → anotaciones de springdoc). **`Compra` y `Edicion` arrastran la decisión del flujo de compra** (enum de estado, `reservado`, `@Version`): no escribirlas sin leerla.
-2. **Pendiente del manejo de errores**: `GlobalExceptionHandler` atiende `ArtistaNotFoundException` y `MethodArgumentNotValidException`. Cualquier **otra** excepción sigue terminando en `500` con el stack trace en el cuerpo (lo activa `spring-boot-devtools` con `server.error.include-stacktrace=always`). Al sumar handlers, decidir si va una excepción por entidad o una genérica.
-3. **Sin restricción de unicidad en ningún lado.** Hoy se pueden crear cincuenta artistas llamados "Blur". Si se decide que `nombre` sea único, va en la columna (`@Column(unique = true)`), no en un `if` del service: entre el `SELECT` y el `INSERT` hay una ventana de carrera — el mismo problema que la Etapa 2 ataca con el stock.
+2. **Escribir `ReferenciaInvalidaException`** (`extends RuntimeException`, constructor `(String entidad, Long id)` que arma su propio mensaje, como `ArtistaNotFoundException`) **y su handler** → `422`. Es lo que sigue, y es el arranque de la próxima sesión. Después: `AlbumService` (que tiene que resolver el `artistaId` a un `Artista` real vía `ArtistaRepository` antes de guardar), `AlbumController`, springdoc.
+3. **Pendiente del manejo de errores**: `GlobalExceptionHandler` atiende `ArtistaNotFoundException` y `MethodArgumentNotValidException`. Cualquier **otra** excepción sigue terminando en `500` con el stack trace en el cuerpo (lo activa `spring-boot-devtools` con `server.error.include-stacktrace=always`).
+4. **Sin restricción de unicidad en ningún lado.** Hoy se pueden crear cincuenta artistas llamados "Blur". Si se decide que `nombre` sea único, va en la columna (`@Column(unique = true)`), no en un `if` del service: entre el `SELECT` y el `INSERT` hay una ventana de carrera — el mismo problema que la Etapa 2 ataca con el stock.
 
 ### Deuda pedagógica (lo que NO está dominado)
 
@@ -541,6 +557,8 @@ Springdoc genera el documento por **análisis estático**: lee tipos y anotacion
 - **`@Version` y optimistic locking (Etapa 2): el terreno ya está preparado.** Razonó solo el escenario de *lost update* con dos hilos y entendió que el `CHECK` no lo detecta (los dos escriben 0, nunca -1). Retomar desde ahí, no desde cero.
 - **DTOs y validación**: las **decisiones** las tomó y justificó bien solo (dos DTOs, `@NotBlank`, reusar el `Request` en el `PUT`, mapeo en el controller). El **código** necesitó andamiaje en casi todos los pasos: pidió el código hecho para `@Valid`, para el `ArtistaResponse` en `create` y para el handler de validación. Saldarlo con la segunda entidad: que escriba su par de DTOs y cablee los cinco endpoints sin mirar `ArtistaController`.
 - **Anotaciones de springdoc**: mismo perfil que con los DTOs. Las **decisiones** las tomó y justificó bien (qué anotar y qué no, dejar el `400` con el schema genérico). El **código** se trabó dos veces y hubo que servirlo hecho: la sintaxis de `headers = @Header(...)`, y dónde ubicar un `@ApiResponse` nuevo dentro de un `@ApiResponses` que ya existía. Saldarlo con la segunda entidad: que anote sus cinco endpoints sin mirar `ArtistaController`.
+- **Bean Validation más allá de `@NotBlank`**: no conocía `@NotNull` y propuso `nullable` (que no es una anotación, sino un atributo de `@Column` — confusión de capas, ver abajo). La familia por tipo (`@NotNull` / `@NotEmpty` / `@NotBlank`) se explicó una vez; `@Min`/`@Max` se mencionaron pero **no se usaron todavía** (quedó pendiente decidir si `anio` lleva rango).
+- **DTOs con relaciones (`Album`)**: las **decisiones** las tomó bien y una la razonó solo de punta a punta (que cinco excepciones con el mismo cuerpo no distinguen nada). El **código** siguió necesitando corrección: escribió `String anio` **dos veces** —en el `Request` y después en el `Response`— aunque la entidad dice `Integer` y ya se le había señalado.
 - **Streams**: primera vez que aparecen (`.stream().map().toList()`). Vio la analogía con `map` de JS y la evaluación perezosa, pero escribió una sola línea con ayuda. No dominado. Aún no vio `Collectors`, ni las *method references* (`this::toResponse`), que es la forma idiomática de la lambda que quedó en `getAll`.
 - **Records**: primera vez. Entendió qué genera el compilador y por qué van sin Lombok, pero no escribió ninguno sin modelo a la vista salvo `ArtistaResponse`.
 
@@ -557,11 +575,14 @@ Springdoc genera el documento por **análisis estático**: lee tipos y anotacion
 - **Vuelve a preguntar comandos ya dados** (`docker compose up`, entrar a `psql`). Los junta en `bd.txt`; apuntarlo ahí y, más adelante, al README.
 - **Al explicar mecanismos, atribuye intención al sistema** ("quiere protegerme") en vez de describir el mecanismo. Empujarlo al mecanismo cada vez.
 - **Se satura con sesiones largas sobre un mismo tema** ("ya me abruma todo esto", dicho después de una hora seguida de springdoc). No es falta de interés: llega igual al final, pero las últimas decisiones las toma por cansancio. Ofrecer el corte antes de que lo pida, y cerrar con algo mecánico y sin trampas en vez de con una decisión de diseño.
+- **✅ Lo que sí funciona para que razone solo: mostrarle el código de la opción mala, no discutirla en abstracto.** Con las cinco excepciones, escritas una debajo de la otra con el cuerpo idéntico, llegó solo a la conclusión correcta. Antes, con la misma disyuntiva planteada como dos opciones descritas, había elegido la cara sin poder dar el criterio. Usar esto en vez de insistir con preguntas.
 - **Ante territorio completamente nuevo, la secuencia socrática lo frustra en vez de ayudarlo.** Señal de alarma: cuando empieza a contestar "¿cómo es?" o "¿cómo lo cambio?" en lugar de intentar, conviene pasar a explicación directa, con el código servido y explicado línea por línea. Retomar las preguntas después, sobre lo ya escrito.
 
 ### Errores conceptuales corregidos (vigilar si reaparecen)
 
 - Creyó que **`not null` garantiza que el stock no sea negativo**. Son tres cosas distintas: existencia del valor (`not null`), tipo (`integer`) y rango (`CHECK`).
+- Buscó una anotación de validación llamada **`nullable`**. No existe: `nullable` es un **atributo de `@Column`/`@JoinColumn`** (JPA), que genera el `NOT NULL` del `CREATE TABLE` y lo hace cumplir Postgres en cada `INSERT`. `@NotNull` es Bean Validation, la ejecuta Hibernate Validator sobre el JSON deserializado, antes de que el service toque nada. Mismo valor prohibido, distinto ejecutor, distinto momento, y **distinto alcance**: `@NotNull` solo cubre lo que entra por HTTP — un test, otro service o la tarea `@Scheduled` lo esquivan, y ahí la única defensa es la columna.
+- Creyó que **`AlbumResponse` no necesitaba importar `ArtistaResponse` "porque es un record"**. Es porque están en el mismo paquete. Contraejemplo que lo zanjó: `Album` (clase normal, no record) usa `Artista` sin importarlo. `import` no carga nada — es una abreviatura de nombres para el compilador.
 - Creyó que **`validate` valida y después aplica**. No aplica nunca nada.
 - Creyó que si a una dependencia le falta `<version>`, **Maven usa la más nueva**. No: el pom es inválido y el build falla antes de leer una línea de Java (`'dependencies.dependency.version' ... is missing`). Un build tiene que ser reproducible; elegir "la última" haría que el mismo commit compile distinto cada día.
 - Creyó que el `<parent>` **solo fija la versión de Spring**. Trae un `dependencyManagement` con cientos de pares artefacto → versión, terceros incluidos (Postgres, Lombok, Testcontainers, Jackson). Contraejemplo que lo zanja: esas tres no llevan `<version>` en el pom y no son de Spring. No agrega dependencias: solo fija la versión de las que uno declara — y lo que no está en la lista (springdoc) hay que versionarlo a mano.
