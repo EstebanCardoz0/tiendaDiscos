@@ -271,7 +271,9 @@ com.estebancardozo.tiendadiscos
   | Endpoints: `/api/artistas`, `/api/ediciones` | Excepciones: `...NotFoundException` |
   | DTOs: `ArtistaDTO`, `CompraRequest` | Anotaciones y API de Spring |
 
-  Criterio ante la duda: **si la palabra la inventó el dominio, va en español; si viene del framework o del patrón, va en inglés.** Ejemplos: `ArtistaService.findByNombre(String nombre)`, `EdicionNotFoundException`, `GET /api/ediciones/{id}`.
+  Criterio ante la duda: **si la palabra la inventó el dominio, va en español; si viene del framework o del patrón, va en inglés.** Ejemplos: `ArtistaService.findByNombre(String nombre)`, `GET /api/ediciones/{id}`.
+
+  *Aplicación del criterio, decidida el 2026-09-16:* las excepciones del proyecto terminaron **enteramente en inglés** (`NotFoundException`, `InvalidReferenceException`), porque son genéricas y ningún sustantivo del dominio aparece en el nombre — la entidad viaja como parámetro. La forma mixta (`EdicionNotFoundException`) sería la correcta si hubiera una excepción por entidad, que es justamente lo que se descartó (ver §8).
 
   La mezcla dentro de un mismo identificador (`findByNombre`) es inevitable y está bien: el prefijo lo impone Spring Data, el sufijo tiene que ser el nombre exacto del atributo Java.
 
@@ -445,9 +447,9 @@ Todo lo que necesita la otra PC para levantar un entorno idéntico (nombre del c
 
 ### Qué existe
 
-`entity/` (las 7) · `repository/` (las 7, interfaces vacías) · `service/ArtistaService` · `controller/ArtistaController` · `dto/` (`ArtistaRequest`, `ArtistaResponse`, `AlbumRequest`, `AlbumResponse`) · `exception/` (`ArtistaNotFoundException` + `GlobalExceptionHandler`) · `docker-compose.yml` · `application.properties`.
+`entity/` (las 7) · `repository/` (las 7, interfaces vacías) · `service/` (`ArtistaService`, `AlbumService`) · `controller/ArtistaController` · `dto/` (`ArtistaRequest`, `ArtistaResponse`, `AlbumRequest`, `AlbumResponse`) · `exception/` (`NotFoundException`, `InvalidReferenceException`, `GlobalExceptionHandler`) · `docker-compose.yml` · `application.properties`.
 
-De `Album` existe **solo el par de DTOs**. Falta todo el resto de su corte vertical: `ReferenciaInvalidaException`, su handler, `AlbumService`, `AlbumController` y las anotaciones de springdoc.
+De `Album` existen los DTOs y el service completo (los cinco métodos). **Falta `AlbumController`** y sus anotaciones de springdoc — o sea, `AlbumService` compila y Spring lo instancia, pero ningún endpoint lo llama todavía.
 
 **`Artista` está cerrado de punta a punta** y probado con `curl`: `GET` de la colección, `GET` por id, `POST` con `201` y `Location`, `PUT`, `DELETE` con `204`, el `404` traducido a `ProblemDetail`, DTOs de entrada y salida en los cinco endpoints, y validación con `400` + detalle por campo. Es el corte vertical de referencia: replicar esa forma en las otras seis entidades.
 
@@ -476,6 +478,23 @@ El pago con Mercado Pago es **asincrónico**: entre que el cliente arranca el ch
 | La reserva vencida la libera una **tarea programada** (`@Scheduled` + `@EnableScheduling`) que pasa a `EXPIRADA` | Esperar un request que no va a llegar (el cliente cerró la pestaña). Un timeout no se espera: se verifica. Un hilo que pregunta cada minuto, no mil hilos dormidos |
 | **`@Version` en `Edicion`**, igual que antes | El conflicto se adelantó de `stock` a `reservado`, pero `@Version` protege **la fila**, no la columna. Y mejora el escenario de la Etapa 2: dos personas apretando "comprar" a la vez es más frecuente que dos webhooks simultáneos |
 
+**De las excepciones** (decididas el 2026-09-16; reemplazan lo que antes se anotó como `ReferenciaInvalidaException`):
+
+Quedan **dos clases, genéricas, y no crecen más** — no hay una excepción por entidad. Las dos reciben `(String entity, Long id)` y arman su propio mensaje ("No se encontró X con el id N"):
+
+| Clase | Status | Cuándo |
+|---|---|---|
+| `NotFoundException` | `404` | El id ausente venía en la **URL** (`GET /api/albumes/7`) |
+| `InvalidReferenceException` | `422` | El id ausente venía en el **cuerpo** (`POST /api/albumes` con `artistaId` inexistente) |
+
+| Decisión | Alternativa descartada y por qué |
+|---|---|
+| Una `NotFoundException` genérica en vez de siete (`ArtistaNotFoundException`, `AlbumNotFoundException`, …). `ArtistaNotFoundException` **se borró** | Siete clases solo valen la pena si alguien las distingue: un `catch` o un `@ExceptionHandler` que haga algo diferente con cada una. Como las siete dan el mismo `404` con el mismo cuerpo, el handler terminaría con siete métodos idénticos — un concepto escrito siete veces. **Ojo con la justificación: no es "ahorrar código"** (siete clases de cinco líneas no son un problema de volumen). El criterio es *unificar cuando la repetición no representa una diferencia real* |
+| Que sigan siendo **dos** y no una sola | Tienen el cuerpo casi idéntico, pero el handler las manda a códigos distintos. Que el `detail` diga lo mismo es aceptable: toda la información que las separa viaja en el `status` |
+| El nombre de la entidad como **literal** (`new NotFoundException("Artista", id)`) | `Artista.class.getSimpleName()`: recupera la verificación del compilador, pero ata el texto de cara al cliente al nombre de la clase Java — renombrar una entidad es refactor interno y no debería cambiar una respuesta HTTP. **Costo asumido: un typo en el literal no lo detecta nadie.** Ya pasó (`"Arista"`): compila, arranca, devuelve el `422` correcto y manda una palabra inventada |
+| Nombres de clase en **inglés** (`NotFoundException`, `InvalidReferenceException`) | `ReferenciaInvalidaException`: "referencia inválida" no es vocabulario de una disquería, es vocabulario de programación. La regla de §6 lo manda a inglés. En `EdicionNotFoundException` el español era `Edicion`, que sí es del dominio — al desaparecer la entidad del nombre, desaparece el español |
+| `HttpStatus.UNPROCESSABLE_CONTENT` | `UNPROCESSABLE_ENTITY`: las dos existen en `spring-web` 7 y valen 422, pero el RFC 9110 renombró el status a "Unprocessable Content" en 2022 |
+
 **De la capa service** (decididas sobre `ArtistaService`, son la plantilla para los otros seis):
 
 | Decisión | Alternativa descartada y por qué |
@@ -483,12 +502,22 @@ El pago con Mercado Pago es **asincrónico**: entre que el cliente arranca el ch
 | Inyección por **constructor**, campo `final` | `@Autowired` sobre el campo: obliga a *reflection* para instanciar la clase en un test unitario. Con constructor, el test es `new ArtistaService(mock)`. Además el `final` garantiza no-null por el lenguaje, no por Spring |
 | Sin `@Autowired` en el constructor | Innecesario con un único constructor (doc oficial). Sí hace falta si hay varios |
 | Excepción `extends RuntimeException` | *Checked*: obligaría a `throws` en todas las firmas hacia arriba para algo de lo que nadie puede recuperarse. Mismo criterio que la jerarquía `DataAccessException` de Spring |
-| La excepción arma su propio mensaje (constructor recibe el `Long id`) | Recibir el `String` ya armado: el texto se duplica en cada `throw` y se desincroniza |
+| La excepción arma su propio mensaje (el constructor recibe los datos crudos, hoy `(String entity, Long id)`) | Recibir el `String` ya armado: el texto se duplica en cada `throw` y se desincroniza. Importa porque ese mensaje no se queda en el log — termina en el `detail` del `ProblemDetail` que lee el cliente |
+| El mensaje evita el artículo: **"No se encontró X con el id N"** | "el X con el id N no fue encontrado": al ser `X` un parámetro, el artículo no puede concordar en género — sale "el Edicion", "el Compra". Es el costo de generalizar: lo que se vuelve parámetro deja de poder influir en el resto de la frase. La voz pasiva refleja lo esquiva |
 | `findById` devuelve `Artista` o lanza | Devolver `Optional` (válida, pero obliga a repetir el desenvuelto en cada controller) y devolver `null` (descartada: el tipo miente y el NPE aparece lejos del origen) |
 | `PUT` con **reemplazo total** | Actualización parcial: al deserializar JSON, `null` no distingue "campo ausente" de "borrá este campo". Si se quiere parcial de verdad, va un `PATCH` aparte |
 | `update` toma `(Long id, Artista)` y hace `setId(id)` | El id del cuerpo: la URL manda. Sin el `setId`, `save` inserta una fila nueva |
 | `delete` verifica y lanza `404` | Silencio idempotente. Descartado: el catálogo es público (§4), no hay enumeración de recursos que ocultar. La idempotencia del RFC 9110 es sobre el **estado del servidor**, no sobre el código de respuesta |
 | Retornos sin texto de interfaz (`void` en `delete`) | Devolver `"Artista borrado exitosamente"`: el service no sabe que HTTP existe |
+
+**De los services con FK** (decididas sobre `AlbumService`, el 2026-09-16; son la plantilla para `Edicion`, `Compra` e `Item`):
+
+| Decisión | Alternativa descartada y por qué |
+|---|---|
+| El service recibe **la entidad a medio armar más el id crudo**: `save(Album album, Long idArtista)`, `update(Long id, Album album, Long idArtista)` | (a) `save(Album album)` como en `Artista`: el controller no puede completar `album.setArtista(...)` porque tiene un `Long` y la entidad espera un `Artista`, y resolverlo exigiría darle un repositorio al controller. (b) `save(AlbumRequest request)`: ata el service a la capa web — ningún test ni job podría usarlo sin fabricar objetos HTTP |
+| El service **necesita un repositorio por cada FK que resuelve**: `AlbumService` inyecta `AlbumRepository` + `ArtistaRepository` | Que un service dependa de más de un repositorio no es olor a diseño: la operación "crear álbum" toca dos tablas. Escala hacia arriba — `CompraService` va a necesitar tres o cuatro |
+| `save`/`update` **completan la entidad recibida** (`album.setArtista(artista)`) | Construir un `Album` nuevo copiando campo por campo: duplica la lista de campos. Cuando la entidad gane uno, hay que acordarse de agregarlo también ahí — compila igual y el campo llega `null` a la base. Es el patrón "todos menos uno" institucionalizado en el código. (Y `@AllArgsConstructor` incluye el `id`, así que el constructor tiene un parámetro más de los que uno cuenta) |
+| Vocabulario de métodos **distinto por capa**: controller `getAll/getById/create/update/delete` (verbos HTTP), service `findAll/findById/save/update/delete` (verbos de persistencia, los de `JpaRepository`) | Usar los mismos en las dos: los nombres son la primera barrera contra que el service empiece a devolver DTOs y códigos de estado. Que `update` y `delete` coincidan en ambas capas no invalida la regla |
 
 **De la capa controller y del manejo de errores:**
 
@@ -543,17 +572,19 @@ Springdoc genera el documento por **análisis estático**: lee tipos y anotacion
 ### Pendiente inmediato
 
 1. Las otras seis entidades, replicando el corte vertical de `Artista` (service → controller → DTOs → excepción → método en `GlobalExceptionHandler` → anotaciones de springdoc). **`Compra` y `Edicion` arrastran la decisión del flujo de compra** (enum de estado, `reservado`, `@Version`): no escribirlas sin leerla.
-2. **Escribir `ReferenciaInvalidaException`** (`extends RuntimeException`, constructor `(String entidad, Long id)` que arma su propio mensaje, como `ArtistaNotFoundException`) **y su handler** → `422`. Es lo que sigue, y es el arranque de la próxima sesión. Después: `AlbumService` (que tiene que resolver el `artistaId` a un `Artista` real vía `ArtistaRepository` antes de guardar), `AlbumController`, springdoc.
-3. **Pendiente del manejo de errores**: `GlobalExceptionHandler` atiende `ArtistaNotFoundException` y `MethodArgumentNotValidException`. Cualquier **otra** excepción sigue terminando en `500` con el stack trace en el cuerpo (lo activa `spring-boot-devtools` con `server.error.include-stacktrace=always`).
+2. **`AlbumController`** — es el arranque de la próxima sesión, y lo único que falta para cerrar el corte vertical de `Album`. Cinco endpoints, el mapeo a DTOs (con el `ArtistaResponse` anidado), el `201` + `Location`, el `204`, y las anotaciones de springdoc. **Las dos últimas cosas están anotadas como deuda** (DTOs y springdoc necesitaron andamiaje en `Artista`): la consigna acordada es que los escriba **sin mirar `ArtistaController`**. Ojo con `update`, que en el service toma tres parámetros (`id`, `Album`, `idArtista`).
+3. **Pendiente del manejo de errores**: `GlobalExceptionHandler` atiende `NotFoundException`, `InvalidReferenceException` y `MethodArgumentNotValidException`. Cualquier **otra** excepción sigue terminando en `500` con el stack trace en el cuerpo (lo activa `spring-boot-devtools` con `server.error.include-stacktrace=always`).
 4. **Sin restricción de unicidad en ningún lado.** Hoy se pueden crear cincuenta artistas llamados "Blur". Si se decide que `nombre` sea único, va en la columna (`@Column(unique = true)`), no en un `if` del service: entre el `SELECT` y el `INSERT` hay una ventana de carrera — el mismo problema que la Etapa 2 ataca con el stock.
 
 ### Deuda pedagógica (lo que NO está dominado)
 
 - **`docker-compose.yml`**: lo escribió Claude. En la Etapa 4, cuando toque agregar el servicio `app`, **que lo escriba él desde cero sin mirar el actual**.
-- **`ArtistaService.update()`**: terminó dictado por Claude tras tres intentos. Saldarlo haciendo que escriba el `update` de otra entidad de punta a punta, sin mirar el de `Artista`.
+- ~~**`ArtistaService.update()`**~~ **SALDADA (2026-09-16).** Escribió `AlbumService.update` completo y solo, sin mirar el de `Artista`, con la estructura correcta (verificar existencia → `setId` → resolver FK → `save`). El único error fue de excepción, no de estructura (ver abajo).
 - **Docker**: solo el vocabulario mínimo (imagen / contenedor / daemon / volumen), el grupo `docker`, `ports`/`volumes`. Nada más.
 - **`BigDecimal` se compara con `compareTo()`, no con `equals()`** — avisar cuando escriba tests (Etapa 3).
-- **`GlobalExceptionHandler`**: se trabó y pidió el código hecho ("no entiendo nada lo que me pedís"). Territorio nuevo — `@RestControllerAdvice` y `@ExceptionHandler` no los había visto nunca. Saldarlo cuando toque el handler de la segunda entidad: que lo escriba él mirando el de `Artista` primero, y el de la tercera sin mirarlo.
+- **`GlobalExceptionHandler`**: se trabó y pidió el código hecho ("no entiendo nada lo que me pedís"). Territorio nuevo — `@RestControllerAdvice` y `@ExceptionHandler` no los había visto nunca. **Parcialmente saldada (2026-09-16):** escribió el handler de `InvalidReferenceException` mirando el molde y migró el del `404`, los dos sin errores. Falta que escriba uno **sin mirar** el de al lado.
+- **Java vs. JavaScript en el nivel de la sintaxis**: escribió `` super(`No se encontró ${entity}...`) `` — *template literals* de JS. Java no tiene interpolación (los *String Templates*, JEP 430/459, fueron preview en 21 y 22 y se **retiraron en la 23**): va concatenación con `+`, o `String.format`. Al corregirlo escribió `+ " id"` entre comillas creyendo que era la variable, y no pudo ver el error solo ni descomponiendo la línea en operandos — hubo que explicar directamente que **las comillas son la frontera entre texto y código**. Vigilar: es la confusión de base que arrastra del stack anterior.
+- **`Optional`**: sabe usarlo cuando copia el molde, no cuando lo escribe solo. Dos errores el mismo día: asignó `artistaRepo.findById(id)` directo a un `Artista` (es `Optional<Artista>`), y escribió `orElseThrow(new X(...))` sin la lambda. El compilador lo dijo textual: `required: Supplier<? extends X> / found: InvalidReferenceException`. El concepto que falta es que `orElseThrow` **no recibe una excepción, recibe una receta para fabricarla** — y que por eso solo se construye si el `Optional` vino vacío.
 - **`@Version` y optimistic locking (Etapa 2): el terreno ya está preparado.** Razonó solo el escenario de *lost update* con dos hilos y entendió que el `CHECK` no lo detecta (los dos escriben 0, nunca -1). Retomar desde ahí, no desde cero.
 - **DTOs y validación**: las **decisiones** las tomó y justificó bien solo (dos DTOs, `@NotBlank`, reusar el `Request` en el `PUT`, mapeo en el controller). El **código** necesitó andamiaje en casi todos los pasos: pidió el código hecho para `@Valid`, para el `ArtistaResponse` en `create` y para el handler de validación. Saldarlo con la segunda entidad: que escriba su par de DTOs y cablee los cinco endpoints sin mirar `ArtistaController`.
 - **Anotaciones de springdoc**: mismo perfil que con los DTOs. Las **decisiones** las tomó y justificó bien (qué anotar y qué no, dejar el `400` con el schema genérico). El **código** se trabó dos veces y hubo que servirlo hecho: la sintaxis de `headers = @Header(...)`, y dónde ubicar un `@ApiResponse` nuevo dentro de un `@ApiResponses` que ya existía. Saldarlo con la segunda entidad: que anote sus cinco endpoints sin mirar `ArtistaController`.
@@ -569,7 +600,10 @@ Springdoc genera el documento por **análisis estático**: lee tipos y anotacion
 - **⚠️ Razona la opción correcta en la conversación y escribe la otra en el código.** Elige lanzar una excepción y escribe `orElse(null)`; concluye `RuntimeException` y escribe `extends Exception`. No es falta de comprensión: el hábito viejo gana cuando la atención está en la sintaxis. Contramedida acordada: que relea el método completo contra la decisión antes de pasarlo.
 - **Corrige la línea señalada y se lleva puesta la anterior.** Pedirle que relea el método entero, no la línea.
 - **⚠️ Aplica un cambio en todos los lugares menos uno.** El patrón más frecuente y el más costoso: de "son tres cambios" hace dos; de "reemplazá las cuatro ocurrencias" reemplaza tres; el que falta suele ser la **firma del método**, porque la atención está en el cuerpo. Aparece incluso cuando se le advierte en el mismo mensaje. **Contramedida acordada (mecánica, no de atención): al terminar, buscar en el archivo la cadena que debía desaparecer (`Ctrl+F`). Si aparece, no terminó.** Al pedirle una tarea de este tipo, decirle de antemano **cuántos** cambios son.
+  **La contramedida no se usó ninguna de las dos veces que hizo falta** (2026-09-16, migrando `ArtistaService` a `NotFoundException`): con la lista de los cuatro lugares escrita en el mensaje, hizo 1 de 4 y avisó; corregido, hizo 3 de 4 y volvió a avisar. Sí funciona **mostrarle la salida del `grep`**: con las tres ocurrencias listadas delante, las cerró sin más ayuda. Conclusión práctica: pedirle la búsqueda no alcanza, hay que hacerla y pegarle el resultado.
+  **Contramedida de diseño que sí funcionó sola:** al cambiar la firma de la excepción de un parámetro a dos, cualquier `throw` olvidado dejó de compilar. Cuando se pueda, darle al refactor una forma que el compilador pueda verificar — y **borrar la clase vieja al final**, que convierte cualquier resto en un error de build.
 - **Da por verificado lo que no se ejecutó.** Probó una refactorización con la tabla vacía: `[]` y `404`, dos respuestas correctas y cero llamadas al método que acababa de extraer. Antes de aceptar una prueba como válida, preguntarle **cuántas veces corrió la línea que cambió**.
+- **⚠️ "Listo" no significa listo.** El 2026-09-16 dijo "listo" cuatro veces: una sin haber guardado el archivo (el disco tenía la versión vieja), dos con el build roto, una sin haber corrido la búsqueda que se le había pedido. **Contramedida: no aceptar un "listo" sin leer el archivo en disco, y pedirle la última línea del build** ("¿qué dijo, `SUCCESS` o `FAILURE`?"). Cuando se le preguntó explícitamente, contestó bien.
 - **Deja código viejo comentado** en vez de borrarlo, e **importa dos veces la misma clase** (el IDE lo agrega y él además lo escribe). Señalarlo cada vez: para lo primero está Git; para lo segundo, mirar la lista de imports antes de aceptar la sugerencia del IDE.
 - **Pide el código hecho antes que intentarlo** (ver regla 1.b). Aceptable para sintaxis; **no** para decisiones de diseño — ahí hay que hacerlo elegir y justificar.
 - **Vuelve a preguntar comandos ya dados** (`docker compose up`, entrar a `psql`). Los junta en `bd.txt`; apuntarlo ahí y, más adelante, al README.
@@ -586,6 +620,10 @@ Springdoc genera el documento por **análisis estático**: lee tipos y anotacion
 - Creyó que **`validate` valida y después aplica**. No aplica nunca nada.
 - Creyó que si a una dependencia le falta `<version>`, **Maven usa la más nueva**. No: el pom es inválido y el build falla antes de leer una línea de Java (`'dependencies.dependency.version' ... is missing`). Un build tiene que ser reproducible; elegir "la última" haría que el mismo commit compile distinto cada día.
 - Creyó que el `<parent>` **solo fija la versión de Spring**. Trae un `dependencyManagement` con cientos de pares artefacto → versión, terceros incluidos (Postgres, Lombok, Testcontainers, Jackson). Contraejemplo que lo zanja: esas tres no llevan `<version>` en el pom y no son de Spring. No agrega dependencias: solo fija la versión de las que uno declara — y lo que no está en la lista (springdoc) hay que versionarlo a mano.
+- Creyó que **un repositorio es "los métodos tipo get, getAll"**. Es una interfaz de `repository/`, una por entidad, que el service recibe por constructor. Acto seguido, creyó que `AlbumRepository` podía traerle un `Artista`: el primer genérico de `JpaRepository<Album, Long>` **es la tabla con la que habla**, y `albumRepo.findById(7L)` devuelve `Optional<Album>`, no `Optional<Artista>`.
+- **No sabía qué es la "firma" de un método** (todo lo anterior a la llave: visibilidad, tipo de retorno, nombre y parámetros). Vocabulario básico que faltaba; conviene no usarlo sin haberlo definido. Nota útil que sí entendió: la firma es lo único que ve quien llama, por eso es decisión de diseño y el cuerpo es detalle.
+- Creyó que **sin `@Service` el error aparece al compilar**. Aparece **al arrancar**: `javac` solo verifica tipos y no sabe qué es inyección de dependencias; el que no encuentra el bean es Spring al armar el contexto (`UnsatisfiedDependencyException` → `NoSuchBeanDefinitionException`). Otro caso de "¿quién lo hace?".
+- Llamó **"más eficiente"** a completar la entidad recibida en vez de construir otra copiando campos. No cambia el rendimiento (la JVM asigna objetos chicos a costo despreciable y el viaje a la base domina por órdenes de magnitud): lo que cambia es que hay **una sola lista de campos en vez de dos**. No es más rápido, es menos frágil.
 - Confundió `private` con la visibilidad de paquete (`private` es solo la clase; la de paquete es la que no lleva modificador).
 - Llamó "azúcar sintáctico" a `Optional`. No lo es: cambia el tipo y las garantías del compilador, no la sintaxis.
 - Confusión de capas: preguntó si `create-drop` era "algo de Docker o de Postgres". Es de Hibernate. Ante cualquier comportamiento raro, insistir en **"¿quién lo hace?"** antes que "¿dónde pasa?".
@@ -596,3 +634,14 @@ Springdoc genera el documento por **análisis estático**: lee tipos y anotacion
 Casi todos los bugs encontrados hasta ahora tienen la misma forma: **el sistema arranca, responde, y está mal.** El `ddl-auto` sin definir, el Postgres nativo compitiendo por el 5432, el `CREATE TABLE` que falla como `WARN`, el volumen de Docker montado en el path viejo, el `orElse(null)`, el `delete` que no borraba, y toda la tanda de springdoc (la doc anunciando `200` donde el código devuelve `201`, el `404` documentado con un cuerpo que la API nunca manda, el `@ApiResponse` duplicado que pisa al anterior en silencio).
 
 De ahí los dos métodos que conviene sostener: **predecir antes de mirar**, y **verificar por el camino que falla**, no por otro. Corolario: "levanta y responde" nunca es criterio de que algo esté bien.
+
+**⚠️ `BUILD SUCCESS` tampoco es criterio — y esta trampa es del entorno, no de Esteban** (encontrada el 2026-09-16). La extensión de Java de VSCode compila en background y deja los `.class` de `target/` más nuevos que los `.java`. Maven entonces informa:
+
+```
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] BUILD SUCCESS
+```
+
+sobre **cero archivos**, con dos errores de compilación reales en el código. `mvn clean compile` los mostró. **Usar siempre `clean` para verificar**: un `BUILD SUCCESS` no dice "tu código está bien", dice "no falló ninguna de las tareas que corrí" — y si la tarea fue *nada*, el éxito es vacío.
+
+Ejemplos nuevos de la misma familia, los dos del 2026-09-16: `super(... + " id")` con la variable entre comillas (sale el texto `id` en vez del número, y el `+` entre strings no tiene forma de fallar), y el literal `"Arista"` sin la `t` (compila, arranca, devuelve el `422` correcto, y le manda una palabra inventada al cliente).

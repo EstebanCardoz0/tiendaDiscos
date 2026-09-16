@@ -5,7 +5,7 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 
 import com.estebancardozo.tiendadiscos.entity.Artista;
-import com.estebancardozo.tiendadiscos.exception.ArtistaNotFoundException;
+import com.estebancardozo.tiendadiscos.exception.NotFoundException;
 import com.estebancardozo.tiendadiscos.repository.ArtistaRepository;
 
 @Service
@@ -23,7 +23,7 @@ public class ArtistaService {
   }
 
   public Artista findById(Long id) {
-    return artistaRepo.findById(id).orElseThrow(() -> new ArtistaNotFoundException(id));
+    return artistaRepo.findById(id).orElseThrow(() -> new NotFoundException("Artista", id));
 
   }
 
@@ -33,7 +33,7 @@ public class ArtistaService {
 
   public Artista update(Long id, Artista artista) {
     if (!artistaRepo.existsById(id)) {
-      throw new ArtistaNotFoundException(id);
+      throw new NotFoundException("Artista", id);
     }
     artista.setId(id);
     return artistaRepo.save(artista);
@@ -41,10 +41,10 @@ public class ArtistaService {
 
   public void delete(Long id) {
     if (!artistaRepo.existsById(id)) {
-      throw new ArtistaNotFoundException(id);
+      throw new NotFoundException("Artista", id);
     }
     artistaRepo.deleteById(id);
-    
+
   }
 
 }

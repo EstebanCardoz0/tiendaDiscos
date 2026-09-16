@@ -14,9 +14,14 @@ import org.springframework.validation.FieldError;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-  @ExceptionHandler(ArtistaNotFoundException.class)
-  public ProblemDetail handleArtistaNotFound(ArtistaNotFoundException ex) {
+  @ExceptionHandler(NotFoundException.class)
+  public ProblemDetail handleNotFound(NotFoundException ex) {
     return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+  }
+
+  @ExceptionHandler(InvalidReferenceException.class)
+  public ProblemDetail handleInvalidReference(InvalidReferenceException ex) {
+    return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_CONTENT, ex.getMessage());
   }
 
   @ExceptionHandler(MethodArgumentNotValidException.class)
