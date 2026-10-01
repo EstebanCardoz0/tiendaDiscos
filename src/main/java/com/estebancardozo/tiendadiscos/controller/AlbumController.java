@@ -3,7 +3,6 @@ package com.estebancardozo.tiendadiscos.controller;
 import java.net.URI;
 import java.util.List;
 
-import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,16 +18,11 @@ import com.estebancardozo.tiendadiscos.entity.Album;
 import com.estebancardozo.tiendadiscos.entity.Artista;
 import com.estebancardozo.tiendadiscos.service.AlbumService;
 
-import io.swagger.v3.oas.annotations.headers.Header;
-import io.swagger.v3.oas.annotations.media.Content;
-import io.swagger.v3.oas.annotations.responses.ApiResponse;
-import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import jakarta.validation.Valid;
 
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.PutMapping;
-import io.swagger.v3.oas.annotations.media.Schema;
 
 @RestController
 @RequestMapping("/api/albumes")
@@ -41,8 +35,6 @@ public class AlbumController {
     }
 
     @GetMapping("/{id}")
-    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Album encontrado"),
-            @ApiResponse(responseCode = "404", description = "No existe un album con ese id", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))) })
     public AlbumResponse getById(@PathVariable Long id) {
 
         Album album = albumser.findById(id);
@@ -62,10 +54,6 @@ public class AlbumController {
     }
 
     @PostMapping()
-    @ApiResponses({
-            @ApiResponse(responseCode = "201", description = "Album creado exitosamente", headers = @Header(name = "Location", description = "URL del album creado", schema = @Schema(type = "string"))),
-            @ApiResponse(responseCode = "400", description = "faltan campos obligatorios o son inválidos", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))),
-            @ApiResponse(responseCode = "422", description = "El artistaId proporcionado no coincide con ningun artista", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))), })
     public ResponseEntity<AlbumResponse> create(@Valid @RequestBody AlbumRequest album) {
 
         Album al = new Album();
@@ -85,19 +73,12 @@ public class AlbumController {
     }
 
     @DeleteMapping("/{id}")
-    @ApiResponses({ @ApiResponse(responseCode = "204", description = "Se eliminó el album correctamente"),
-            @ApiResponse(responseCode = "404", description = "No se encontró el album con ese id", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))) })
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         albumser.delete(id);
         return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/{id}")
-    @ApiResponses({@ApiResponse(responseCode = "200", description = "Album actualizado"),
-
-          @ApiResponse(responseCode = "404", description = "No existe un album con ese id", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))),
-            @ApiResponse(responseCode = "400", description = "faltan campos obligatorios o son inválidos", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))),
-            @ApiResponse(responseCode = "422", description = "El artistaId proporcionado no coincide con ningun artista", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))) })
     public AlbumResponse update(@PathVariable Long id, @Valid @RequestBody AlbumRequest request) {
 
         Album album = new Album();
