@@ -12,7 +12,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.CheckConstraint;
 
 @Entity
-@Table(check = { @CheckConstraint(constraint = "stock >=0"), @CheckConstraint(constraint = "precio >=0") })
+@Table(check = { @CheckConstraint(constraint = "stock >=0"), @CheckConstraint(constraint = "precio >=0"), @CheckConstraint(constraint = "reservado>=0"), @CheckConstraint(constraint = "reservado <= stock") })
 @Getter
 @Setter
 @AllArgsConstructor
@@ -27,6 +27,8 @@ public class Edicion {
   private Integer stock;
   @Column(precision = 10, scale = 2, nullable = false)
   private BigDecimal precio;
+  @Column (nullable = false) 
+  private Integer reservado;
   @ManyToOne
   @JoinColumn(nullable = false, name = "album_id")
   private Album album;
