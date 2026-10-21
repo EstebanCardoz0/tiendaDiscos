@@ -51,9 +51,11 @@ public class EdicionService {
 
     public Edicion update(Long id, Edicion edicion, Long albumId) {
 
-        edicionRepo.findById(id).orElseThrow(() -> new NotFoundException("Edicion", id));
+        Edicion guardada = edicionRepo.findById(id).orElseThrow(() -> new NotFoundException("Edicion", id));
 
         edicion.setId(id);
+
+        edicion.setReservado(guardada.getReservado());
 
         Album album = albumRepo.findById(albumId).orElseThrow(() -> new InvalidReferenceException("Album", albumId));
 
